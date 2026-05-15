@@ -18,6 +18,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QVideoFrame, QVideoFrameFormat
 from PySide6.QtWidgets import QApplication, QRhiWidget
 
 from iPhoto.config import VIDEO_COMPLETE_HOLD_BACKSTEP_MS
+import iPhoto.gui.ui.widgets.gl_texture_manager as gl_texture_manager_module
 from iPhoto.gui.ui.widgets.gl_image_viewer import GLImageViewer
 from iPhoto.gui.ui.widgets.gl_texture_manager import TextureManager
 from iPhoto.gui.render_backend import selected_rhi_backend_name
@@ -34,6 +35,7 @@ from iPhoto.gui.ui.widgets.video_renderer_widget import (
     _UBO_SIZE,
     VideoRendererWidget,
     _classify_frame_format,
+    _rgba_upload_payload,
     _resolve_frame_rotation_cw,
 )
 from iPhoto.gui.ui.widgets.view_transform_controller import ViewTransformController
@@ -142,6 +144,19 @@ class TestVideoRendererWidget:
         """Widget should start with no frame and an empty native size."""
         w = VideoRendererWidget()
         assert w.native_size().isEmpty()
+
+    def test_rgba_upload_payload_detaches_bytes_and_stride(self, qapp):
+        """RGBA fallback uploads should pass stable bytes to QRhi."""
+
+        image = QImage(3, 2, QImage.Format.Format_RGB32)
+
+        rgba_image, payload, stride = _rgba_upload_payload(image)
+
+        assert rgba_image.format() == QImage.Format.Format_RGBA8888
+        assert rgba_image.width() == 3
+        assert rgba_image.height() == 2
+        assert stride == rgba_image.bytesPerLine()
+        assert len(payload) == rgba_image.sizeInBytes()
 
     def test_set_letterbox_color(self, qapp):
         """set_letterbox_color should update the stored color."""
@@ -1292,10 +1307,7 @@ def test_texture_manager_uses_qimage_fallback_for_linux_nv12_frames(qapp, mocker
     frame.toImage.return_value = QImage(1920, 1080, QImage.Format.Format_RGBA8888)
     frame.map.side_effect = AssertionError("Linux NV12 fallback should not map plane data")
 
-    monkeypatch.setattr(
-        "iPhoto.gui.ui.widgets.gl_texture_manager.sys.platform",
-        "linux",
-    )
+    monkeypatch.setattr(gl_texture_manager_module.sys, "platform", "linux")
 
     manager.upload_video_frame(frame)
 
