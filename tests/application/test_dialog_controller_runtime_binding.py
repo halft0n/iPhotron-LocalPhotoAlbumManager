@@ -56,13 +56,19 @@ def test_bind_library_dialog_uses_runtime_open_library(
     context = _Context(old_root)
     status_bar = Mock()
     controller = DialogController(object(), context, status_bar)
+    select_calls: list[dict[str, object]] = []
+
+    def _select_directory(*_args: object, **kwargs: object) -> Path:
+        select_calls.append(kwargs)
+        return selected_root
 
     monkeypatch.setattr(
         "iPhoto.gui.ui.controllers.dialog_controller.dialogs.select_directory",
-        lambda *_args, **_kwargs: selected_root,
+        _select_directory,
     )
 
     assert controller.bind_library_dialog() == selected_root
+    assert select_calls == [{"use_qt_directory_dialog_on_macos": True}]
 
     assert context.open_calls == [selected_root]
     assert context.library.bind_calls == []

@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QWidget
 
-from typing import TYPE_CHECKING
 from ....application.contracts.runtime_entry_contract import RuntimeEntryContract
-from ....errors import LibraryError
 from ....config import DEFAULT_EXCLUDE, DEFAULT_INCLUDE
+from ....errors import LibraryError
 from ....utils.pathutils import resolve_work_dir
 from ..widgets import dialogs
 
@@ -37,11 +36,15 @@ class DialogController:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def open_album_dialog(self) -> Optional[Path]:
+    def open_album_dialog(self) -> Path | None:
         return dialogs.select_directory(self._parent, "Select album")
 
-    def bind_library_dialog(self) -> Optional[Path]:
-        root = dialogs.select_directory(self._parent, "Select Basic Library")
+    def bind_library_dialog(self) -> Path | None:
+        root = dialogs.select_directory(
+            self._parent,
+            "Select Basic Library",
+            use_qt_directory_dialog_on_macos=True,
+        )
         if root is None:
             _logger.info("bind_library_dialog: user cancelled folder selection")
             return None
@@ -51,7 +54,10 @@ class DialogController:
                 _logger.info("bind_library_dialog: cancelling active scans before rebind")
                 self._context.facade.cancel_active_scans()
             self._context.open_library(root)
-            _logger.info("bind_library_dialog: bind_path succeeded, root=%s", self._context.library.root())
+            _logger.info(
+                "bind_library_dialog: bind_path succeeded, root=%s",
+                self._context.library.root(),
+            )
         except LibraryError as exc:
             _logger.error("bind_library_dialog: bind_path failed: %s", exc)
             dialogs.show_error(self._parent, str(exc))
@@ -104,10 +110,10 @@ class DialogController:
         """Ask whether *filename* should be restored to the library root."""
 
         message = (
-            "The original album for '{name}' could not be found or its original "
+            f"The original album for '{filename}' could not be found or its original "
             "location could not be determined. Do you want to restore this file "
             "to the main 'Basic Library' folder instead?"
-        ).format(name=filename)
+        )
         return dialogs.confirm_action(
             self._parent,
             message,

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QPalette
@@ -12,8 +12,28 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 from ..theme_manager import DARK_THEME, LIGHT_THEME, ThemeColors
 
 
-def select_directory(parent: QWidget, caption: str, start: Optional[Path] = None) -> Optional[Path]:
+def select_directory(
+    parent: QWidget,
+    caption: str,
+    start: Path | None = None,
+    *,
+    use_qt_directory_dialog_on_macos: bool = False,
+) -> Path | None:
     """Return a directory selected by the user or ``None`` when cancelled."""
+
+    if use_qt_directory_dialog_on_macos and sys.platform == "darwin":
+        directory = str(start) if start is not None else str(Path.home())
+        dialog = QFileDialog(parent, caption, directory)
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        if not dialog.exec():
+            return None
+        selected = dialog.selectedFiles()
+        if not selected:
+            return None
+        return Path(selected[0])
 
     directory = str(start) if start is not None else ""
     path = QFileDialog.getExistingDirectory(parent, caption, directory)
@@ -22,7 +42,7 @@ def select_directory(parent: QWidget, caption: str, start: Optional[Path] = None
     return Path(path)
 
 
-def _apply_theme(box: QMessageBox, parent: Optional[QWidget]) -> None:
+def _apply_theme(box: QMessageBox, parent: QWidget | None) -> None:
     """Apply the active theme colors to the message box."""
     # Prioritize parent palette if available, otherwise fallback to app palette
     if parent:
@@ -42,7 +62,7 @@ def _apply_theme(box: QMessageBox, parent: Optional[QWidget]) -> None:
     box.setStyleSheet(stylesheet)
 
 
-def _resolve_popup_palette_source(parent: Optional[QWidget]) -> QPalette:
+def _resolve_popup_palette_source(parent: QWidget | None) -> QPalette:
     """Return the most appropriate palette source for popup surfaces."""
 
     theme_colors = _resolve_popup_theme_colors(parent)
@@ -68,7 +88,7 @@ def _resolve_popup_palette_source(parent: Optional[QWidget]) -> QPalette:
     return QPalette(QApplication.palette())
 
 
-def _resolve_popup_theme_colors(parent: Optional[QWidget]) -> ThemeColors | None:
+def _resolve_popup_theme_colors(parent: QWidget | None) -> ThemeColors | None:
     """Resolve theme colors from the hosting window context when available."""
 
     widget = parent.window() if parent is not None and parent.window() is not None else parent
@@ -98,7 +118,13 @@ def _resolve_popup_theme_colors(parent: Optional[QWidget]) -> ThemeColors | None
 def show_error(parent: QWidget, message: str, *, title: str = "iPhoto") -> None:
     """Display a blocking error message."""
 
-    box = QMessageBox(QMessageBox.Icon.Critical, title, message, QMessageBox.StandardButton.Ok, parent)
+    box = QMessageBox(
+        QMessageBox.Icon.Critical,
+        title,
+        message,
+        QMessageBox.StandardButton.Ok,
+        parent,
+    )
     _apply_theme(box, parent)
     box.exec()
 
@@ -151,7 +177,13 @@ def confirm_action(
     Returns:
         True if the user selected the affirmative option, False otherwise.
     """
-    box = QMessageBox(QMessageBox.Icon.Question, title, message, QMessageBox.StandardButton.NoButton, parent)
+    box = QMessageBox(
+        QMessageBox.Icon.Question,
+        title,
+        message,
+        QMessageBox.StandardButton.NoButton,
+        parent,
+    )
     yes_btn = box.addButton(yes_label, QMessageBox.ButtonRole.YesRole)
     box.addButton(no_label, QMessageBox.ButtonRole.NoRole)
 
