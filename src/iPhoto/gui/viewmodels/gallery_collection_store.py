@@ -90,6 +90,7 @@ class GalleryCollectionStore:
         self.window_changed = Signal()
         self.count_changed = Signal()
         self.row_changed = Signal()
+        self.thumbnail_backfill_scheduled = Signal()
 
         self._asset_query_service = asset_query_service
         self._library_root = library_root or getattr(asset_query_service, "library_root", None)
@@ -109,6 +110,8 @@ class GalleryCollectionStore:
         self._pending_scan_refresh = False
         self._pending_scan_rels: set[str] = set()
         self._pending_scan_sort_keys: set[tuple[str, str]] = set()
+        self._thumbnail_backfill_windows: set[tuple[int, int]] = set()
+        self._thumbnail_backfill_pending = False
         self._direct_mode = False
         self._collection_revision = 0
         self._request_generation = 0
@@ -512,6 +515,18 @@ class GalleryCollectionStore:
         if visible_first == 0 or self._pending_scan_affects_visible_window(visible_first, visible_last):
             self._flush_pending_scan_refresh()
 
+    def handle_scan_batch(self, batch: object) -> None:
+        """Consume an explicit ready-only scan batch without depending on legacy chunks."""
+
+        rows = getattr(batch, "rows", None)
+        root = getattr(batch, "root", None)
+        revision = getattr(batch, "collection_revision", None)
+        if isinstance(revision, int):
+            self._collection_revision = max(self._collection_revision, revision)
+        if root is None or not rows:
+            return
+        self.handle_scan_chunk(Path(root), list(rows))
+
     def handle_scan_finished(self, root: Path, success: bool) -> None:
         if not success or self._current_query is None or self._active_root is None:
             return
@@ -569,12 +584,21 @@ class GalleryCollectionStore:
         fetch_result = self._fetch_window_for_visible_range(first, last)
         new_total = fetch_result[0]
         if new_total <= 0:
-            old_total = self._total_count
-            self._reset_window_state()
-            if emit_signals and old_total != 0:
-                self.count_changed.emit(old_total, 0)
-                self.data_changed.emit()
-            return
+            queued_backfill = self._request_visible_thumbnail_backfill(first, last)
+            if new_total <= 0:
+                old_total = self._total_count
+                if queued_backfill > 0 or self._thumbnail_backfill_pending:
+                    self._row_cache.clear()
+                    self._total_count = 0
+                    self._window_range = None
+                    self._visible_range = (first, last)
+                    self._pinned_row = None
+                else:
+                    self._reset_window_state()
+                if emit_signals and old_total != 0:
+                    self.count_changed.emit(old_total, 0)
+                    self.data_changed.emit()
+                return
 
         first = max(0, min(first, new_total - 1))
         last = max(first, min(last, new_total - 1))
@@ -614,6 +638,30 @@ class GalleryCollectionStore:
             self.window_changed.emit(window_first, window_last)
             if pinned_row is not None and pinned_row not in fetched_rows and pinned_row in self._row_cache:
                 self.window_changed.emit(pinned_row, pinned_row)
+
+        if self._request_visible_thumbnail_backfill(first, last) > 0:
+            self._pending_scan_refresh = True
+
+    def flush_pending_thumbnail_backfill(self) -> bool:
+        """Reload the visible window after queued stale thumbnail backfill work."""
+
+        if not self._thumbnail_backfill_pending:
+            return False
+        if self._visible_range is None or self._current_query is None:
+            self._thumbnail_backfill_pending = False
+            return False
+        first, last = self._visible_range
+        self._reload_window_for_visible_range(
+            first,
+            last,
+            emit_signals=True,
+            emit_source_changed=True,
+        )
+        pending_check = getattr(self._asset_query_service, "thumbnail_backfill_pending", None)
+        still_pending = bool(pending_check()) if callable(pending_check) else False
+        if not still_pending:
+            self._thumbnail_backfill_pending = False
+        return still_pending
 
     def _fetch_window_for_visible_range(
         self,
@@ -807,6 +855,39 @@ class GalleryCollectionStore:
             return None
         fetched = self._fetch_rows(row, row)
         return fetched.get(row)
+
+    def _request_visible_thumbnail_backfill(self, first: int, last: int) -> int:
+        if self._current_query is None or self._asset_query_service is None:
+            return 0
+        active_root = self._active_root or self._library_root
+        if active_root is None:
+            return 0
+        window_first, window_limit = self._compute_target_window_unbounded(first, last)
+        request_key = (window_first, window_limit)
+        window_end = window_first + window_limit
+        for requested_first, requested_limit in self._thumbnail_backfill_windows:
+            if requested_first <= window_first and requested_first + requested_limit >= window_end:
+                return 0
+        if request_key in self._thumbnail_backfill_windows:
+            return 0
+        request_backfill = getattr(self._asset_query_service, "request_thumbnail_backfill", None)
+        if not callable(request_backfill):
+            return 0
+        self._thumbnail_backfill_windows.add(request_key)
+        try:
+            queued = int(request_backfill(active_root, self._current_query, window_first, window_limit) or 0)
+            if queued > 0:
+                self._thumbnail_backfill_pending = True
+                self.thumbnail_backfill_scheduled.emit()
+            return queued
+        except Exception as exc:
+            emit_perf_event(
+                "gallery_thumbnail_backfill_failed",
+                first=window_first,
+                limit=window_limit,
+                error=type(exc).__name__,
+            )
+            return 0
 
     def _ensure_row_loaded(self, row: int, *, emit_signals: bool) -> None:
         if row in self._row_cache:
@@ -1035,5 +1116,7 @@ class GalleryCollectionStore:
         self._pending_scan_refresh = False
         self._pending_scan_rels.clear()
         self._pending_scan_sort_keys.clear()
+        self._thumbnail_backfill_windows.clear()
+        self._thumbnail_backfill_pending = False
         self._collection_revision += 1
         self._request_generation += 1

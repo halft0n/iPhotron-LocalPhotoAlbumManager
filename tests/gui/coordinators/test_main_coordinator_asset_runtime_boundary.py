@@ -238,8 +238,8 @@ def test_connect_signals_wires_location_scan_updates_from_library_and_service() 
 
     coordinator._connect_signals()
 
-    coordinator._context.library.scanChunkReady.connect.assert_any_call(
-        coordinator._gallery_store.handle_scan_chunk
+    coordinator._context.library.scanBatchCommitted.connect.assert_any_call(
+        coordinator._gallery_store.handle_scan_batch
     )
     coordinator._context.library.scanFinished.connect.assert_any_call(
         coordinator._gallery_store.handle_scan_finished
@@ -250,8 +250,8 @@ def test_connect_signals_wires_location_scan_updates_from_library_and_service() 
     coordinator._context.library.scanFinished.connect.assert_any_call(
         coordinator._gallery_vm.handle_location_scan_finished
     )
-    coordinator._facade.library_updates.scanChunkReady.connect.assert_any_call(
-        coordinator._gallery_store.handle_scan_chunk
+    coordinator._facade.library_updates.scanBatchCommitted.connect.assert_any_call(
+        coordinator._gallery_store.handle_scan_batch
     )
     coordinator._facade.library_updates.scanFinished.connect.assert_any_call(
         coordinator._gallery_store.handle_scan_finished

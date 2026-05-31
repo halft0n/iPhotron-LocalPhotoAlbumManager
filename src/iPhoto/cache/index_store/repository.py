@@ -177,6 +177,7 @@ class AssetRepository:
             CollectionQuery,
             dict[int, PageCursor | None],
         ] = {}
+        self._collection_meta_cache: dict[CollectionQuery, tuple[int, int]] = {}
         self._init_db()
 
     def _init_db(self) -> None:
@@ -926,11 +927,12 @@ class AssetRepository:
                 )
                 rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
             self._remember_collection_window(query, first, rows)
+            total_count, collection_revision = self._collection_count_and_revision(conn, query)
             result = WindowResult(
                 first=first,
                 rows=rows,
-                total_count=self.count_collection(query),
-                collection_revision=self._collection_revision(conn, query),
+                total_count=total_count,
+                collection_revision=collection_revision,
             )
             emit_perf_event(
                 "collection_window_reload",
@@ -966,6 +968,83 @@ class AssetRepository:
             return None, []
 
         return QueryBuilder.build_collection_query(query, cursor=cursor, limit=limit)
+
+    def read_thumbnail_backfill_candidates(
+        self,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Return stale thumbnail rows matching the same collection scope."""
+
+        stale_query = CollectionQuery(
+            collection_type=query.collection_type,
+            album_path=query.album_path,
+            include_subalbums=query.include_subalbums,
+            media_types=query.media_types,
+            is_favorite=query.is_favorite,
+            has_gps=query.has_gps,
+            date_from=query.date_from,
+            date_to=query.date_to,
+            search_text=query.search_text,
+            sort_key=query.sort_key,
+            sort_direction=query.sort_direction,
+            min_thumbnail_state="stale",
+        )
+        sql, params = QueryBuilder.build_collection_query(
+            stale_query,
+            limit=max(0, int(limit)),
+            offset=max(0, int(first)),
+        )
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            return [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+        finally:
+            if should_close:
+                conn.close()
+
+    def update_thumbnail_ready(
+        self,
+        rel: str,
+        *,
+        micro_thumbnail: bytes | None = None,
+        thumb_cache_key: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update thumbnail readiness for a single asset row."""
+
+        normalized_rel = unicodedata.normalize("NFC", str(rel))
+        if error:
+            self._db_manager.execute_in_transaction(
+                """
+                UPDATE assets
+                SET thumbnail_state = 'failed',
+                    thumb_error = ?,
+                    thumb_updated_at = ?,
+                    index_revision = COALESCE(index_revision, 0) + 1
+                WHERE rel = ?
+                """,
+                [str(error), _utc_ms(), normalized_rel],
+            )
+        else:
+            if micro_thumbnail is None and not str(thumb_cache_key or "").strip():
+                raise ValueError("ready thumbnails require micro_thumbnail or thumb_cache_key")
+            self._db_manager.execute_in_transaction(
+                """
+                UPDATE assets
+                SET thumbnail_state = 'ready',
+                    micro_thumbnail = COALESCE(?, micro_thumbnail),
+                    thumb_cache_key = COALESCE(?, thumb_cache_key),
+                    thumb_error = NULL,
+                    thumb_updated_at = ?,
+                    index_revision = COALESCE(index_revision, 0) + 1
+                WHERE rel = ?
+                """,
+                [micro_thumbnail, thumb_cache_key, _utc_ms(), normalized_rel],
+            )
+        self._clear_collection_anchor_cache()
 
     def _cursor_for_collection_offset(
         self,
@@ -1287,6 +1366,19 @@ class AssetRepository:
         row = conn.execute(sql, params).fetchone()
         return int(row[0] if row else 0)
 
+    def _collection_count_and_revision(
+        self,
+        conn: sqlite3.Connection,
+        query: CollectionQuery,
+    ) -> tuple[int, int]:
+        cached = self._collection_meta_cache.get(query)
+        if cached is not None:
+            return cached
+        count = self.count_collection(query)
+        revision = self._collection_revision(conn, query)
+        self._collection_meta_cache[query] = (count, revision)
+        return count, revision
+
     def _explain_query_plan(
         self,
         conn: sqlite3.Connection,
@@ -1329,6 +1421,7 @@ class AssetRepository:
 
     def _clear_collection_anchor_cache(self) -> None:
         self._collection_anchor_cache.clear()
+        self._collection_meta_cache.clear()
 
     @staticmethod
     def _page_cursor_from_row(row: dict[str, Any]) -> PageCursor | None:

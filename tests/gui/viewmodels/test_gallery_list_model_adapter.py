@@ -21,6 +21,7 @@ def mock_store():
     store.data_changed = MagicMock()
     store.window_changed = MagicMock()
     store.row_changed = MagicMock()
+    store.thumbnail_backfill_scheduled = MagicMock()
     store.count.return_value = 0
     return store
 
@@ -121,7 +122,11 @@ def test_decoration_role_uses_full_size_thumbnail_even_with_micro_fallback(
     result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
 
     assert result is full_size
-    mock_thumb_service.get_thumbnail.assert_called_once()
+    mock_thumb_service.get_thumbnail.assert_called_once_with(
+        Path("photo.jpg"),
+        adapter._thumb_size,
+        priority="visible",
+    )
 
 
 def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(

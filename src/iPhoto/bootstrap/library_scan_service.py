@@ -36,6 +36,7 @@ from ..index_sync_service import (
 )
 from ..infrastructure.services.filesystem_media_scanner import FilesystemMediaScanner
 from ..domain.models.scan import ScanStage
+from ..domain.models.scan import ScanBatchCommitted
 from ..io.scanner_adapter import process_media_paths
 from ..media_classifier import ALL_IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from ..path_normalizer import compute_album_path
@@ -195,6 +196,7 @@ class LibraryScanService:
         progress_callback: Callable[[int, int], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None,
+        scan_batch_callback: Callable[[ScanBatchCommitted], None] | None = None,
         batch_failed_callback: Callable[[int], None] | None = None,
         chunk_size: int = 500,
         persist_chunks: bool = False,
@@ -252,6 +254,7 @@ class LibraryScanService:
                     is_cancelled=is_cancelled,
                     row_transform=self._library_relative_transform(scan_root),
                     visible_chunk_callback=chunk_callback,
+                    scan_batch_callback=scan_batch_callback,
                     batch_failed_callback=batch_failed_callback,
                     chunk_size=chunk_size,
                     persist_chunks=persist_chunks,

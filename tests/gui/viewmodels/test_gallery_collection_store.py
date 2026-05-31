@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice
 from PySide6.QtGui import QImage
@@ -234,6 +235,89 @@ def test_gallery_window_fetch_uses_window_api_without_extra_count() -> None:
 
     assert service.read_calls == [(0, 320)]
     assert service.count_calls == 0
+
+
+def test_gallery_applies_scan_batch_without_full_reset() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(120)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(Path("."), query=AssetQuery())
+    refreshes: list[object] = []
+    store.data_changed.connect(lambda: refreshes.append("changed"))
+
+    store.handle_scan_batch(
+        SimpleNamespace(
+            root=Path("."),
+            collection_revision=99,
+            rows=[
+                {
+                    "rel": "asset_0.jpg",
+                    "id": "0",
+                    "dt": datetime(2024, 1, 1).isoformat(),
+                    "thumbnail_state": "ready",
+                    "micro_thumbnail": b"thumb",
+                }
+            ],
+        )
+    )
+
+    assert store.snapshot_signature()[2] >= 99
+    assert store.count() == 120
+
+
+class _BackfillQueryService(_FakeQueryService):
+    def __init__(self, *, library_root: Path) -> None:
+        super().__init__([], library_root=library_root)
+        self.backfill_requests: list[tuple[int, int]] = []
+
+    def request_thumbnail_backfill(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> int:
+        del root, query
+        self.backfill_requests.append((first, limit))
+        if self.assets:
+            return 0
+        return 1
+
+    def complete_backfill(self) -> None:
+        self.assets.append(
+            Asset(
+                id="backfilled",
+                album_id="a",
+                path=Path("backfilled.jpg"),
+                media_type=MediaType.IMAGE,
+                size_bytes=1,
+            )
+        )
+
+
+def test_gallery_requests_visible_window_stale_backfill_once() -> None:
+    service = _BackfillQueryService(library_root=Path("."))
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    store.prioritize_rows(0, 20)
+
+    assert store.count() == 0
+    assert service.backfill_requests == [(0, store.INITIAL_VISIBLE_ROWS * store.WINDOW_MULTIPLIER)]
+    service.complete_backfill()
+    assert store.flush_pending_thumbnail_backfill() is False
+    assert store.count() == 1
     assert store.snapshot_signature()[2] >= 42
 
 

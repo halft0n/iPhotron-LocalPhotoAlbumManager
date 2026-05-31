@@ -39,10 +39,15 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._prioritize_timer.setSingleShot(True)
         self._prioritize_timer.setInterval(16)
         self._prioritize_timer.timeout.connect(self._flush_pending_prioritize_rows)
+        self._backfill_refresh_timer = QTimer(self)
+        self._backfill_refresh_timer.setSingleShot(True)
+        self._backfill_refresh_timer.setInterval(500)
+        self._backfill_refresh_timer.timeout.connect(self._flush_pending_thumbnail_backfill)
 
         self._store.window_changed.connect(self._on_window_changed)
         self._store.data_changed.connect(self._on_source_changed)
         self._store.row_changed.connect(self._on_row_changed)
+        self._store.thumbnail_backfill_scheduled.connect(self._schedule_thumbnail_backfill_refresh)
         self._thumbnails.thumbnailReady.connect(self._on_thumbnail_ready)
 
     @classmethod
@@ -95,7 +100,11 @@ class GalleryListModelAdapter(QAbstractListModel):
         if role_int == Qt.ItemDataRole.DisplayRole:
             return asset.rel_path.name
         if role_int == Qt.DecorationRole:
-            return self._thumbnails.get_thumbnail(asset.abs_path, self._thumb_size)
+            return self._thumbnails.get_thumbnail(
+                asset.abs_path,
+                self._thumb_size,
+                priority="visible",
+            )
         if role_int == Qt.ItemDataRole.ToolTipRole:
             return str(asset.abs_path)
 
@@ -203,6 +212,15 @@ class GalleryListModelAdapter(QAbstractListModel):
         if pending is None:
             return
         self._store.prioritize_rows(*pending)
+
+    def _schedule_thumbnail_backfill_refresh(self) -> None:
+        if not self._backfill_refresh_timer.isActive():
+            self._backfill_refresh_timer.start()
+
+    def _flush_pending_thumbnail_backfill(self) -> None:
+        still_pending = self._store.flush_pending_thumbnail_backfill()
+        if still_pending:
+            self._backfill_refresh_timer.start()
 
     def pin_row(self, row: int) -> None:
         self._store.pin_row(row)

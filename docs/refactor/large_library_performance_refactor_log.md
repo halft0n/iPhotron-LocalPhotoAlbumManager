@@ -258,3 +258,93 @@ Known constraints:
   cache-key production path.
 - The Gallery window API fallback remains necessary for tests and legacy query
   surfaces that do not yet implement `read_query_asset_window()`.
+
+---
+
+# Scan/Scroll Follow-up Log
+
+Date: 2026-05-31
+Branch: `codex/large-library-performance`
+
+## Scope
+
+This follow-up continues the scan and scrolling performance work after the
+Phase 3/4 baseline. It focuses on a pragmatic production slice:
+
+- explicit ready-only `ScanBatchCommitted` transport
+- Gallery consumption of scan batches without dropping the legacy chunk signal
+- visible-window-first stale thumbnail recovery
+- bounded priority thumbnail generation in the Qt thumbnail cache
+- collection window count/revision reuse
+
+The existing deletion of `docs/requirements/INITIAL_SCAN_LARGE_LIBRARY_STABILITY.md`
+was preserved and not modified.
+
+## Completed Changes
+
+- Added `scan_job_id` to `ScanLibraryResult`.
+- Added `scan_batch_callback` to the scan use case/service path and emit
+  `ScanBatchCommitted` DTOs containing only thumbnail-ready rows.
+- Persisted richer `scan_events.batch_committed` payloads with requested,
+  merged, ready, elapsed, and revision details.
+- Added `scanBatchCommitted = Signal(object)` through `ScannerSignals`,
+  `LibraryRuntimeController`, `LibraryUpdateService`, and `AppFacade`.
+- Connected `MainCoordinator` so Gallery consumes explicit scan batches while
+  legacy `scanChunkReady` remains connected for compatibility.
+- Added `GalleryCollectionStore.handle_scan_batch()` and visible-window stale
+  backfill triggering.
+- Moved stale thumbnail backfill off the Gallery/UI call path into a single
+  background worker owned by `LibraryAssetQueryService`; Gallery now polls for
+  completion via a lightweight 500ms timer before reloading the visible window.
+- Added repository `read_thumbnail_backfill_candidates()` and
+  `update_thumbnail_ready()`.
+- Added per-query collection count/revision cache for `read_collection_window()`
+  with invalidation on repository writes and thumbnail state updates.
+- Hardened ready collection SQL so `thumbnail_state='ready'` also requires
+  `micro_thumbnail` or `thumb_cache_key`.
+- Changed `ThumbnailCacheService` to queue misses through bounded priority
+  queues, limit active generation jobs, support pending cancellation, and apply
+  a 60s failure cooldown.
+- Changed Gallery `DecorationRole` thumbnail requests to use visible priority.
+
+## Verification
+
+Commands run:
+
+```bash
+.venv/bin/pytest tests/application/test_library_scan_service.py tests/cache/test_index_store_features.py tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/test_thumbnail_cache_service.py tests/library/test_scanner_worker.py
+.venv/bin/pytest tests/cache/test_index_store_features.py tests/test_scanner_adapter.py tests/application/test_library_scan_service.py tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/test_asset_grid_scroll.py tests/performance/test_refactor_performance_baseline.py tests/test_thumbnail_cache_service.py tests/application/test_library_asset_query_service.py tests/library/test_scanner_worker.py
+.venv/bin/pytest tests/gui/coordinators/test_main_coordinator_asset_runtime_boundary.py tests/services/test_library_update_service_global_db.py
+.venv/bin/pytest tests/cache/test_index_store_features.py tests/test_scanner_adapter.py tests/application/test_library_scan_service.py tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/test_asset_grid_scroll.py tests/performance/test_refactor_performance_baseline.py tests/test_thumbnail_cache_service.py tests/application/test_library_asset_query_service.py tests/library/test_scanner_worker.py tests/gui/coordinators/test_main_coordinator_asset_runtime_boundary.py tests/services/test_library_update_service_global_db.py
+python3 -m compileall -q src/iPhoto
+git diff --check
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m iPhoto.gui.main
+```
+
+Result:
+
+- Phase 3/4 + follow-up + GUI/service signal boundary pytest group:
+  129 passed.
+- compileall passed.
+- diff whitespace check passed.
+- offscreen GUI launch reached saved-library bind and All Photos selection for
+  `/Users/haibinzhao/Documents/testbase`; the test process was then stopped.
+- pytest still reports the existing warning: unknown `env` config option.
+
+## Handoff
+
+Current behavior to preserve:
+
+- `ScanBatchCommitted.rows` and legacy `scanChunkReady` GUI chunks must remain
+  ready-only.
+- Gallery should continue to use DB window reloads as source of truth after
+  scan batches, not append arbitrary rows into the model.
+- `ThumbnailCacheService` L1/L2 hits must not enqueue generation work.
+- Failed thumbnail generation should respect cooldown until invalidated.
+
+Next recommended work:
+
+- Replace Gallery backfill timer polling with an explicit Qt/application
+  completion event that can publish `ScanBatchCommitted` on success.
+- Add explicit Qt timer coalescing for scan-triggered Gallery reloads.
+- Add query-plan and opt-in synthetic 100k/1M performance benchmarks.

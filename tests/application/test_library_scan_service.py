@@ -429,3 +429,48 @@ def test_scan_specific_files_prefixes_subalbum_rows(
     assert [row["rel"] for row in store.read_album_assets("album")] == [
         "album/a.jpg"
     ]
+
+
+def test_scan_batch_committed_transport_contains_only_ready_rows(tmp_path: Path) -> None:
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    rows = [
+        {
+            "rel": "ready.jpg",
+            "id": "ready",
+            "thumbnail_state": "ready",
+            "micro_thumbnail": b"thumb",
+        },
+        {
+            "rel": "failed.jpg",
+            "id": "failed",
+            "thumbnail_state": "failed",
+            "thumb_error": "boom",
+        },
+    ]
+    batches = []
+    legacy_chunks: list[list[dict[str, Any]]] = []
+    service = LibraryScanService(library_root, scanner=_Scanner(rows))
+
+    result = service.scan_album(
+        library_root,
+        persist_chunks=True,
+        chunk_size=2,
+        chunk_callback=legacy_chunks.append,
+        scan_batch_callback=batches.append,
+    )
+
+    assert result.scan_job_id
+    assert len(batches) == 1
+    assert batches[0].job_id == result.scan_job_id
+    assert [row["rel"] for row in batches[0].rows] == ["ready.jpg"]
+    assert [row["rel"] for row in legacy_chunks[0]] == ["ready.jpg"]
+
+    with sqlite3.connect(get_global_repository(library_root).path) as conn:
+        event = conn.execute(
+            "SELECT event_type, payload_json FROM scan_events WHERE job_id = ? AND event_type = 'batch_committed'",
+            [result.scan_job_id],
+        ).fetchone()
+    assert event is not None
+    assert event[0] == "batch_committed"
+    assert '"ready_rows": 1' in event[1]

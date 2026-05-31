@@ -24,6 +24,7 @@ class ScannerSignals(QObject):
 
     progressUpdated = Signal(Path, int, int)
     chunkReady = Signal(Path, list)
+    batchCommitted = Signal(object)
     finished = Signal(Path, list)
     error = Signal(Path, str)
     batchFailed = Signal(Path, int)
@@ -127,10 +128,8 @@ class ScannerWorker(QRunnable):
                 exclude=self._exclude,
                 progress_callback=progress_callback,
                 is_cancelled=lambda: self._is_cancelled,
-                chunk_callback=lambda chunk: self._signals.chunkReady.emit(
-                    self._root,
-                    chunk,
-                ),
+                chunk_callback=self._emit_chunk_if_active,
+                scan_batch_callback=self._emit_batch_if_active,
                 batch_failed_callback=lambda count: self._signals.batchFailed.emit(
                     self._root,
                     count,
@@ -172,6 +171,16 @@ class ScannerWorker(QRunnable):
                 count,
             ),
         )
+
+    def _emit_chunk_if_active(self, chunk: list[dict]) -> None:
+        if self._is_cancelled:
+            return
+        self._signals.chunkReady.emit(self._root, chunk)
+
+    def _emit_batch_if_active(self, batch: object) -> None:
+        if self._is_cancelled:
+            return
+        self._signals.batchCommitted.emit(batch)
 
     def cancel(self) -> None:
         """Request cancellation of the in-progress scan."""

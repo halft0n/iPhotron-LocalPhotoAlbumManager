@@ -54,3 +54,32 @@ def test_render_thumbnail_skips_color_stats_without_sidecar(tmp_path: Path) -> N
     assert rendered is not None
     edit_service.describe_adjustments.assert_not_called()
     compute_stats.assert_not_called()
+
+
+def test_thumbnail_failure_has_cooldown(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "missing.jpg"
+    size = QSize(64, 64)
+    key = service._cache_key(path, size)
+
+    service._handle_generation_failure(path, size, "empty_render")
+    with patch.object(service, "_queue_generation") as queue_generation:
+        assert service.get_thumbnail(path, size) is None
+
+    queue_generation.assert_not_called()
+    assert service._failure_until[key] > 0
+
+
+def test_l1_l2_hit_does_not_enqueue_generation(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "photo.jpg"
+    path.write_bytes(b"image")
+    size = QSize(64, 64)
+    key = service._cache_key(path, size)
+    image = QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied)
+    service._memory_cache[key] = image
+
+    with patch.object(service, "_queue_generation") as queue_generation:
+        assert service.get_thumbnail(path, size) is image
+
+    queue_generation.assert_not_called()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import threading
 from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
@@ -23,6 +25,7 @@ from ..domain.models.query import (
     SortOrder,
     WindowResult,
 )
+from ..io.scanner_adapter import ensure_scan_thumbnail
 from ..path_normalizer import compute_album_path
 
 
@@ -53,6 +56,13 @@ class LibraryAssetQueryService:
     ) -> None:
         self.library_root = Path(library_root)
         self._repository_factory = repository_factory or get_global_repository
+        self._thumbnail_backfill_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="iPhotoThumbBackfill",
+        )
+        self._thumbnail_backfill_lock = threading.Lock()
+        self._thumbnail_backfill_pending: set[tuple[str, int, int, str]] = set()
+        self._thumbnail_backfill_shutdown = False
 
     def count_assets(
         self,
@@ -269,6 +279,115 @@ class LibraryAssetQueryService:
         """Return a bounded SQL-first window for *query*."""
 
         return self._repository().read_collection_window(query, first, limit)
+
+    def read_thumbnail_backfill_candidates(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Return stale rows near a gallery window for thumbnail backfill."""
+
+        read_candidates = getattr(self._repository(), "read_thumbnail_backfill_candidates", None)
+        if not callable(read_candidates):
+            return []
+        if not self._can_use_collection_api(query):
+            return []
+        album_path = self.album_path_for(root)
+        return list(
+            self._scoped_rows(
+                read_candidates(
+                    self._collection_query_for_asset_query(query),
+                    first,
+                    limit,
+                ),
+                album_path,
+            )
+        )
+
+    def request_thumbnail_backfill(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> int:
+        """Queue low-priority stale thumbnail backfill near the visible window."""
+
+        repository = self._repository()
+        update_thumbnail_ready = getattr(repository, "update_thumbnail_ready", None)
+        if not callable(update_thumbnail_ready):
+            return 0
+        if self._thumbnail_backfill_shutdown:
+            return 0
+
+        album_path = self.album_path_for(root)
+        candidates = self.read_thumbnail_backfill_candidates(root, query, first, limit)
+        if not candidates:
+            return 0
+
+        request_key = (root.as_posix(), max(0, int(first)), max(0, int(limit)), repr(query))
+        with self._thumbnail_backfill_lock:
+            if request_key in self._thumbnail_backfill_pending:
+                return 0
+            self._thumbnail_backfill_pending.add(request_key)
+
+        self._thumbnail_backfill_executor.submit(
+            self._run_thumbnail_backfill,
+            request_key,
+            Path(root),
+            album_path,
+            candidates,
+        )
+        return len(candidates)
+
+    def thumbnail_backfill_pending(self) -> bool:
+        """Return whether any queued stale thumbnail backfill is still active."""
+
+        with self._thumbnail_backfill_lock:
+            return bool(self._thumbnail_backfill_pending)
+
+    def shutdown(self) -> None:
+        """Stop background thumbnail backfill work during session teardown."""
+
+        self._thumbnail_backfill_shutdown = True
+        self._thumbnail_backfill_executor.shutdown(wait=False, cancel_futures=True)
+        with self._thumbnail_backfill_lock:
+            self._thumbnail_backfill_pending.clear()
+
+    def _run_thumbnail_backfill(
+        self,
+        request_key: tuple[str, int, int, str],
+        root: Path,
+        album_path: str | None,
+        candidates: list[dict[str, Any]],
+    ) -> None:
+        repository = self._repository()
+        update_thumbnail_ready = getattr(repository, "update_thumbnail_ready", None)
+        if not callable(update_thumbnail_ready):
+            with self._thumbnail_backfill_lock:
+                self._thumbnail_backfill_pending.discard(request_key)
+            return
+        try:
+            for row in candidates:
+                view_rel = row.get("rel")
+                if not isinstance(view_rel, str) or not view_rel:
+                    continue
+                library_rel = f"{album_path}/{view_rel}" if album_path else view_rel
+                abs_path = root / view_rel
+                thumbnail = ensure_scan_thumbnail(abs_path, str(row.get("id") or library_rel))
+                if thumbnail.thumb_error:
+                    update_thumbnail_ready(library_rel, error=thumbnail.thumb_error)
+                    continue
+                update_thumbnail_ready(
+                    library_rel,
+                    micro_thumbnail=thumbnail.micro_thumbnail,
+                    thumb_cache_key=thumbnail.thumb_cache_key,
+                )
+        finally:
+            with self._thumbnail_backfill_lock:
+                self._thumbnail_backfill_pending.discard(request_key)
 
     def find_row_by_path(self, query: CollectionQuery | AssetQuery, path: Path) -> int | None:
         """Locate *path* in a collection without materialising every row."""

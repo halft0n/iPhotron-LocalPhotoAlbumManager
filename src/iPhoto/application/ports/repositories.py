@@ -96,6 +96,24 @@ class AssetRepositoryPort(Protocol):
     ) -> WindowResult:
         """Return a bounded collection window."""
 
+    def read_thumbnail_backfill_candidates(
+        self,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Return stale thumbnail rows matching a collection query."""
+
+    def update_thumbnail_ready(
+        self,
+        rel: str,
+        *,
+        micro_thumbnail: bytes | None = None,
+        thumb_cache_key: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update thumbnail readiness for one row."""
+
     def create_scan_job(
         self,
         *,

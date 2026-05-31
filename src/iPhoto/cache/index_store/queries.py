@@ -296,6 +296,10 @@ class QueryBuilder:
         if collection_query.min_thumbnail_state:
             where_clauses.append("COALESCE(thumbnail_state, 'ready') = ?")
             params.append(collection_query.min_thumbnail_state)
+            if collection_query.min_thumbnail_state == "ready":
+                where_clauses.append(
+                    "(micro_thumbnail IS NOT NULL OR TRIM(COALESCE(thumb_cache_key, '')) != '')"
+                )
 
         album_path = collection_query.album_path
         if album_path != RECENTLY_DELETED_DIR_NAME:

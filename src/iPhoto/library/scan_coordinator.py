@@ -72,6 +72,7 @@ class ScanCoordinatorMixin:
         signals = ScannerSignals()
         signals.progressUpdated.connect(self.scanProgress)
         signals.chunkReady.connect(self._on_scan_chunk)
+        signals.batchCommitted.connect(self._on_scan_batch_committed)
         signals.finished.connect(self._on_scan_finished)
         signals.error.connect(self._on_scan_error)
         signals.batchFailed.connect(self._on_scan_batch_failed)
@@ -313,6 +314,16 @@ class ScanCoordinatorMixin:
         if self._current_face_scanner is not None:
             self._current_face_scanner.enqueue_rows(chunk)
         self.scanChunkReady.emit(root, chunk)
+
+    def _on_scan_batch_committed(self, batch: object) -> None:
+        """Handle explicit ready-only scan batches after persistence."""
+
+        rows = getattr(batch, "rows", None)
+        if rows:
+            self.invalidate_geotagged_assets_cache()
+            if self._current_face_scanner is not None:
+                self._current_face_scanner.enqueue_rows(rows)
+        self.scanBatchCommitted.emit(batch)
 
     def _on_scan_finished(self, root: Path, rows: List[dict]) -> None:
         self.invalidate_geotagged_assets_cache()

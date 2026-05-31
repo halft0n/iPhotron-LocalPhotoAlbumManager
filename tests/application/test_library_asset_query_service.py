@@ -60,6 +60,29 @@ class _Repository:
         }
 
 
+class _BackfillRepository(_Repository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready_updates: list[tuple[str, dict[str, Any]]] = []
+        self.candidate_calls: list[tuple[Any, int, int]] = []
+
+    def read_thumbnail_backfill_candidates(self, query, first: int, limit: int):
+        self.candidate_calls.append((query, first, limit))
+        return [{"rel": "Trip/stale.jpg", "id": "stale", "thumbnail_state": "stale"}]
+
+    def update_thumbnail_ready(self, rel: str, **kwargs: Any) -> None:
+        self.ready_updates.append((rel, kwargs))
+
+
+class _DeferredExecutor:
+    def __init__(self) -> None:
+        self.submitted = []
+
+    def submit(self, fn, *args):
+        self.submitted.append((fn, args))
+        return None
+
+
 def test_count_and_geometry_rows_are_scoped_to_album_path(tmp_path: Path) -> None:
     library_root = tmp_path / "Library"
     album_root = library_root / "Trip"
@@ -239,3 +262,50 @@ def test_date_query_compares_scanned_utc_rows_with_naive_bounds(tmp_path: Path) 
     )
 
     assert [row["id"] for row in rows] == ["inside"]
+
+
+def test_thumbnail_backfill_request_is_deferred_off_call_path(tmp_path: Path) -> None:
+    library_root = tmp_path / "Library"
+    album_root = library_root / "Trip"
+    album_root.mkdir(parents=True)
+    repo = _BackfillRepository()
+    service = LibraryAssetQueryService(library_root, repository_factory=lambda _root: repo)
+    executor = _DeferredExecutor()
+    service._thumbnail_backfill_executor = executor  # type: ignore[assignment]
+
+    queued = service.request_thumbnail_backfill(album_root, AssetQuery(), 0, 100)
+
+    assert queued == 1
+    assert len(executor.submitted) == 1
+    assert repo.ready_updates == []
+    assert service.thumbnail_backfill_pending() is True
+
+
+def test_thumbnail_backfill_request_after_shutdown_is_ignored(tmp_path: Path) -> None:
+    library_root = tmp_path / "Library"
+    album_root = library_root / "Trip"
+    album_root.mkdir(parents=True)
+    repo = _BackfillRepository()
+    service = LibraryAssetQueryService(library_root, repository_factory=lambda _root: repo)
+    service.shutdown()
+
+    assert service.request_thumbnail_backfill(album_root, AssetQuery(), 0, 100) == 0
+
+
+def test_thumbnail_backfill_skips_queries_that_collection_api_cannot_represent(
+    tmp_path: Path,
+) -> None:
+    library_root = tmp_path / "Library"
+    library_root.mkdir()
+    repo = _BackfillRepository()
+    service = LibraryAssetQueryService(library_root, repository_factory=lambda _root: repo)
+
+    queued = service.request_thumbnail_backfill(
+        library_root,
+        AssetQuery(asset_ids=["only-this-asset"]),
+        0,
+        100,
+    )
+
+    assert queued == 0
+    assert repo.candidate_calls == []

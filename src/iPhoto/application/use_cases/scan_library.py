@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ...domain.models.scan import ScanBatchCommitted
 from ..ports import AssetRepositoryPort, MediaScannerPort
 
 LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class ScanLibraryRequest:
     row_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None
     visible_chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None
+    scan_batch_callback: Callable[[ScanBatchCommitted], None] | None = None
     batch_failed_callback: Callable[[int], None] | None = None
     chunk_size: int = 500
     persist_chunks: bool = True
@@ -35,6 +37,7 @@ class ScanLibraryRequest:
 class ScanLibraryResult:
     rows: list[dict[str, Any]]
     failed_count: int = 0
+    scan_job_id: str | None = None
 
 
 class ScanLibraryUseCase:
@@ -83,7 +86,11 @@ class ScanLibraryUseCase:
         ):
             failed_count += self._merge_chunk(chunk, request)
 
-        return ScanLibraryResult(rows=rows, failed_count=failed_count)
+        return ScanLibraryResult(
+            rows=rows,
+            failed_count=failed_count,
+            scan_job_id=request.scan_job_id,
+        )
 
     def merge_chunk(
         self,
@@ -119,7 +126,19 @@ class ScanLibraryUseCase:
             len(chunk),
             round(_monotonic_ms() - started, 3),
         )
+        commit_elapsed_ms = round(_monotonic_ms() - started, 3)
         ready_chunk = _ready_visible_rows(emitted_chunk)
+        collection_revision = _collection_revision_from_rows(emitted_chunk)
+        batch = None
+        if request.scan_job_id and ready_chunk:
+            batch = ScanBatchCommitted(
+                job_id=request.scan_job_id,
+                root=request.root,
+                collection_revision=collection_revision,
+                ready_count=len(ready_chunk),
+                rows=ready_chunk,
+                stage_elapsed_ms={"db_commit": commit_elapsed_ms},
+            )
         append_scan_event = getattr(self._asset_repository, "append_scan_event", None)
         if request.scan_job_id and callable(append_scan_event):
             append_scan_event(
@@ -129,12 +148,16 @@ class ScanLibraryUseCase:
                     "requested_rows": len(chunk),
                     "rows": len(emitted_chunk),
                     "ready_rows": len(ready_chunk),
+                    "commit_elapsed_ms": commit_elapsed_ms,
+                    "collection_revision": collection_revision,
                 },
             )
         if request.chunk_callback is not None:
             request.chunk_callback(emitted_chunk)
         if request.visible_chunk_callback is not None and ready_chunk:
             request.visible_chunk_callback(ready_chunk)
+        if request.scan_batch_callback is not None and batch is not None:
+            request.scan_batch_callback(batch)
         return 0
 
 
@@ -151,6 +174,16 @@ def _ready_visible_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         ready.append(row)
     return ready
+
+
+def _collection_revision_from_rows(rows: list[dict[str, Any]]) -> int:
+    revision = 0
+    for row in rows:
+        try:
+            revision = max(revision, int(row.get("index_revision") or 0))
+        except (TypeError, ValueError):
+            continue
+    return revision
 
 
 __all__ = ["ScanLibraryRequest", "ScanLibraryResult", "ScanLibraryUseCase"]

@@ -442,11 +442,11 @@ class MainCoordinator(QObject):
         self._context.library.albumRenamed.connect(self._on_album_renamed)
         # Library watcher rescans still emit through the bound LibraryRuntimeController,
         # while facade-initiated rescans emit through LibraryUpdateService.
-        self._context.library.scanChunkReady.connect(self._gallery_store.handle_scan_chunk)
+        self._context.library.scanBatchCommitted.connect(self._gallery_store.handle_scan_batch)
         self._context.library.scanFinished.connect(self._gallery_store.handle_scan_finished)
         self._context.library.scanChunkReady.connect(self._gallery_vm.handle_location_scan_chunk)
         self._context.library.scanFinished.connect(self._gallery_vm.handle_location_scan_finished)
-        updates.scanChunkReady.connect(self._gallery_store.handle_scan_chunk)
+        updates.scanBatchCommitted.connect(self._gallery_store.handle_scan_batch)
         updates.scanFinished.connect(self._gallery_store.handle_scan_finished)
         updates.scanChunkReady.connect(self._gallery_vm.handle_location_scan_chunk)
         updates.scanFinished.connect(self._gallery_vm.handle_location_scan_finished)
