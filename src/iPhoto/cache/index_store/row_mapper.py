@@ -25,13 +25,15 @@ def insert_rows(
         return
 
     columns = [
-        "rel", "id", "parent_album_path", "dt", "ts", "bytes", "mime",
+        "rel", "id", "parent_album_path", "dt", "ts", "sort_ts", "bytes", "mime",
         "make", "model", "lens", "iso", "f_number", "exposure_time",
         "exposure_compensation", "focal_length", "w", "h", "gps",
         "content_id", "frame_rate", "codec", "still_image_time", "dur",
         "original_rel_path", "original_album_id", "original_album_subpath",
         "live_role", "live_partner_rel", "aspect_ratio", "year", "month",
-        "media_type", "is_favorite", "location", "micro_thumbnail", "face_status"
+        "media_type", "is_favorite", "is_deleted", "has_gps", "thumbnail_state",
+        "location", "micro_thumbnail", "thumb_cache_key", "thumb_updated_at",
+        "thumb_error", "index_revision", "face_status"
     ]
     placeholders = ", ".join(["?"] * len(columns))
     query = (
@@ -46,6 +48,13 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
     """Map a dictionary row to a list of values for the DB."""
     gps_val = row.get("gps")
     gps_str = json.dumps(gps_val) if gps_val is not None else None
+    has_gps = row.get("has_gps")
+    if has_gps is None:
+        has_gps = 1 if gps_val is not None else 0
+    sort_ts = row.get("sort_ts")
+    if sort_ts is None:
+        sort_ts = row.get("ts")
+    thumbnail_state = row.get("thumbnail_state") or "ready"
 
     # Compute parent_album_path from rel if not provided
     rel = row.get("rel")
@@ -61,6 +70,7 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
         parent_album_path,
         row.get("dt"),
         row.get("ts"),
+        sort_ts,
         row.get("bytes"),
         row.get("mime"),
         row.get("make"),
@@ -89,8 +99,15 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
         row.get("month"),
         row.get("media_type"),
         row.get("is_favorite", 0),
+        row.get("is_deleted", 0),
+        has_gps,
+        thumbnail_state,
         row.get("location"),
         row.get("micro_thumbnail"),
+        row.get("thumb_cache_key"),
+        row.get("thumb_updated_at", 0),
+        row.get("thumb_error"),
+        row.get("index_revision", 0),
         row.get("face_status"),
     ]
 

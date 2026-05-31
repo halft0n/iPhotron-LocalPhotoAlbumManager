@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, Slot
 
-from iPhoto.application.ports import EditServicePort
 from iPhoto.application.dtos import AssetDTO
+from iPhoto.application.ports import EditServicePort
 from iPhoto.gui.ui.models.roles import Roles, role_names
+from iPhoto.infrastructure.services.performance_events import emit_perf_event
 from iPhoto.infrastructure.services.thumbnail_cache_service import ThumbnailCacheService
 from iPhoto.utils.geocoding import resolve_location_name
 
 from .gallery_collection_store import GalleryCollectionStore
-
-
-_SNAPSHOT_SEPARATOR = b"\x00"
-_SNAPSHOT_NULL_MARKER = b"\xff"
 
 
 class GalleryListModelAdapter(QAbstractListModel):
@@ -37,7 +33,7 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._edit_service_getter = edit_service_getter
         self._thumb_size = QSize(512, 512)
         self._current_row = -1
-        self._last_snapshot: Optional[tuple[int, bytes]] = None
+        self._last_snapshot: Optional[tuple[int, Optional[tuple[int, int]], int]] = None
         self._duration_cache: dict[Path, float] = {}
 
         self._store.window_changed.connect(self._on_window_changed)
@@ -295,22 +291,23 @@ class GalleryListModelAdapter(QAbstractListModel):
         group_id = metadata.get("live_photo_group_id")
         if not group_id:
             return None, None
-        for row in range(self._store.count()):
-            candidate = self._store.asset_at(row)
-            if candidate is None or not candidate.is_video:
-                continue
-            candidate_group = (candidate.metadata or {}).get("live_photo_group_id")
-            if candidate_group == group_id:
-                return candidate.rel_path, candidate.abs_path
+        partner = self._store.live_partner_for(asset.id, self._store.library_root())
+        if partner is not None and partner.is_video:
+            return partner.rel_path, partner.abs_path
         return None, None
 
     def _on_source_changed(self) -> None:
         count = self._store.count()
-        current_hash = self._snapshot_hash(count)
-        current_snapshot = (count, current_hash)
+        current_snapshot = self._store.snapshot_signature()
         if self._last_snapshot == current_snapshot:
             return
         self._duration_cache.clear()
+        emit_perf_event(
+            "gallery_model_reset",
+            rows=count,
+            window=current_snapshot[1],
+            collection_revision=current_snapshot[2],
+        )
         self.beginResetModel()
         self.endResetModel()
         self._last_snapshot = current_snapshot
@@ -346,15 +343,8 @@ class GalleryListModelAdapter(QAbstractListModel):
             )
 
     def _snapshot_hash(self, count: int) -> bytes:
-        digest = hashlib.blake2b(digest_size=16)
-        for row in range(count):
-            asset = self._store.asset_at(row)
-            if asset is None:
-                digest.update(_SNAPSHOT_NULL_MARKER)
-            else:
-                digest.update(self._get_asset_path_bytes(asset))
-            digest.update(_SNAPSHOT_SEPARATOR)
-        return digest.digest()
+        del count
+        return repr(self._store.snapshot_signature()).encode("utf-8")
 
     @staticmethod
     def _get_asset_path_bytes(asset: object) -> bytes:

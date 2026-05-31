@@ -50,6 +50,7 @@ class SchemaMigrator:
                 parent_album_path TEXT,
                 dt TEXT,
                 ts INTEGER,
+                sort_ts INTEGER,
                 bytes INTEGER,
                 mime TEXT,
                 make TEXT,
@@ -78,8 +79,15 @@ class SchemaMigrator:
                 month INTEGER,
                 media_type INTEGER,
                 is_favorite INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0,
+                has_gps INTEGER DEFAULT 0,
+                thumbnail_state TEXT DEFAULT 'ready',
                 location TEXT,
                 micro_thumbnail BLOB,
+                thumb_cache_key TEXT,
+                thumb_updated_at INTEGER DEFAULT 0,
+                thumb_error TEXT,
+                index_revision INTEGER DEFAULT 0,
                 face_status TEXT
             )
         """)
@@ -113,6 +121,14 @@ class SchemaMigrator:
             "month": "ALTER TABLE assets ADD COLUMN month INTEGER",
             "media_type": "ALTER TABLE assets ADD COLUMN media_type INTEGER",
             "is_favorite": "ALTER TABLE assets ADD COLUMN is_favorite INTEGER DEFAULT 0",
+            "is_deleted": "ALTER TABLE assets ADD COLUMN is_deleted INTEGER DEFAULT 0",
+            "has_gps": "ALTER TABLE assets ADD COLUMN has_gps INTEGER DEFAULT 0",
+            "thumbnail_state": "ALTER TABLE assets ADD COLUMN thumbnail_state TEXT DEFAULT 'ready'",
+            "thumb_cache_key": "ALTER TABLE assets ADD COLUMN thumb_cache_key TEXT",
+            "thumb_updated_at": "ALTER TABLE assets ADD COLUMN thumb_updated_at INTEGER DEFAULT 0",
+            "thumb_error": "ALTER TABLE assets ADD COLUMN thumb_error TEXT",
+            "sort_ts": "ALTER TABLE assets ADD COLUMN sort_ts INTEGER",
+            "index_revision": "ALTER TABLE assets ADD COLUMN index_revision INTEGER DEFAULT 0",
             "location": "ALTER TABLE assets ADD COLUMN location TEXT",
             "parent_album_path": "ALTER TABLE assets ADD COLUMN parent_album_path TEXT",
             "face_status": "ALTER TABLE assets ADD COLUMN face_status TEXT",
@@ -134,6 +150,24 @@ class SchemaMigrator:
                 ELSE 'pending'
             END
             WHERE face_status IS NULL OR TRIM(face_status) = ''
+            """
+        )
+        conn.execute("UPDATE assets SET sort_ts = ts WHERE sort_ts IS NULL")
+        conn.execute(
+            """
+            UPDATE assets
+            SET has_gps = CASE
+                WHEN gps IS NOT NULL AND TRIM(CAST(gps AS TEXT)) != '' THEN 1
+                ELSE 0
+            END
+            WHERE has_gps IS NULL OR has_gps NOT IN (0, 1)
+            """
+        )
+        conn.execute(
+            """
+            UPDATE assets
+            SET thumbnail_state = 'ready'
+            WHERE thumbnail_state IS NULL OR TRIM(thumbnail_state) = ''
             """
         )
 
@@ -178,6 +212,20 @@ class SchemaMigrator:
             # Album prefix queries (for sub-album filtering with LIKE)
             ("CREATE INDEX IF NOT EXISTS idx_parent_album_path "
              "ON assets (parent_album_path)"),
+
+            ("CREATE INDEX IF NOT EXISTS idx_assets_visible_global "
+             "ON assets (live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_visible_album "
+             "ON assets (parent_album_path, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_visible_media "
+             "ON assets (media_type, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_visible_favorite "
+             "ON assets (is_favorite, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_gps "
+             "ON assets (has_gps, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+            "CREATE INDEX IF NOT EXISTS idx_assets_rel_lookup ON assets (rel)",
+            "CREATE INDEX IF NOT EXISTS idx_assets_id_lookup ON assets (id)",
+            "CREATE INDEX IF NOT EXISTS idx_assets_revision ON assets (index_revision)",
         ]
 
         for index_sql in indexes:

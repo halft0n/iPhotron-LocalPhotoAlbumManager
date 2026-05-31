@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 from iPhoto.domain.models import Asset, MediaType
 from iPhoto.domain.models.query import AssetQuery
@@ -14,11 +13,14 @@ class _FakeQueryService:
     def __init__(self, assets, *, library_root: Path = Path(".")):
         self.assets = list(assets)
         self.library_root = library_root
+        self.read_calls: list[tuple[int, int | None]] = []
+        self.row_lookup_calls: list[Path] = []
 
     def count_query_assets(self, query: AssetQuery):
         return len(self._matching_assets(query))
 
     def read_query_asset_rows(self, root: Path, query: AssetQuery):
+        self.read_calls.append((query.offset, query.limit))
         matching = self._matching_assets(query)
         offset = query.offset
         limit = query.limit if query.limit is not None else len(self.assets)
@@ -26,6 +28,18 @@ class _FakeQueryService:
             self._row_for_asset(asset, root)
             for asset in matching[offset : offset + limit]
         ]
+
+    def find_row_by_path(self, query: AssetQuery, path: Path):
+        self.row_lookup_calls.append(path)
+        target = path.name if path.is_absolute() else path.as_posix()
+        for index, asset in enumerate(self._matching_assets(query)):
+            if asset.path.as_posix() == target or asset.path.name == target:
+                return index
+        return None
+
+    def find_live_partner(self, _asset_id: str):
+        return None
+
 
     def _matching_assets(self, query: AssetQuery):
         assets = list(self.assets)
@@ -86,6 +100,19 @@ class _FakeQueryService:
         return None if rel_str in ("", ".") else rel_str
 
 
+class _FailingOnceQueryService(_FakeQueryService):
+    def __init__(self, assets, *, fail_offset: int):
+        super().__init__(assets)
+        self.fail_offset = fail_offset
+        self.failed = False
+
+    def read_query_asset_rows(self, root: Path, query: AssetQuery):
+        if query.offset >= self.fail_offset and not self.failed:
+            self.failed = True
+            raise RuntimeError("transient deep window failure")
+        return super().read_query_asset_rows(root, query)
+
+
 def test_load_initial_window_uses_sparse_cache() -> None:
     assets = [
         Asset(
@@ -132,7 +159,7 @@ def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
     assert initial_keys != updated_keys
 
 
-def test_asset_at_lazily_fetches_row_outside_initial_window() -> None:
+def test_asset_at_does_not_fetch_row_outside_initial_window_synchronously() -> None:
     assets = [
         Asset(
             id=str(i),
@@ -143,7 +170,8 @@ def test_asset_at_lazily_fetches_row_outside_initial_window() -> None:
         )
         for i in range(600)
     ]
-    store = GalleryCollectionStore(_FakeQueryService(assets), library_root=Path("."))
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
     store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
 
     store.load_selection(Path("."), query=AssetQuery())
@@ -152,9 +180,187 @@ def test_asset_at_lazily_fetches_row_outside_initial_window() -> None:
     assert 360 not in store._row_cache
     dto = store.asset_at(360)
 
-    assert dto is not None
-    assert dto.rel_path == Path("asset_360.jpg")
-    assert 360 in store._row_cache
+    assert dto is None
+    assert 360 not in store._row_cache
+    assert service.read_calls == [(0, 320)]
+
+
+def test_row_for_path_uses_query_lookup_without_scanning_batches() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(600)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    service.read_calls.clear()
+
+    assert store.row_for_path(Path("asset_360.jpg")) == 360
+    assert service.row_lookup_calls == [Path("asset_360.jpg")]
+    assert service.read_calls == []
+
+
+def test_prioritize_rows_loads_deep_window_without_sync_asset_at_fetch() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(10_000)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    store.prioritize_rows(7_000, 7_060)
+
+    assert store._window_range is not None
+    assert store._window_range[0] <= 7_000 <= store._window_range[1]
+    assert 7_000 in store._row_cache
+    assert store._row_cache[7_000].rel_path == Path("asset_7000.jpg")
+
+
+def test_prioritize_rows_emits_window_update_without_full_refresh_when_count_unchanged() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(1_000)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    data_events: list[object] = []
+    window_events: list[tuple[int, int]] = []
+    store.data_changed.connect(lambda: data_events.append(object()))
+    store.window_changed.connect(lambda first, last: window_events.append((first, last)))
+
+    store.prioritize_rows(600, 660)
+
+    assert data_events == []
+    assert window_events
+    assert store._window_range is not None
+    assert store._window_range[0] <= 600 <= store._window_range[1]
+
+
+def test_ensure_row_loaded_fetches_bounded_deep_window() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(10_000)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    service.read_calls.clear()
+
+    assert store.ensure_row_loaded(7_000) is True
+
+    assert store._window_range is not None
+    assert store._window_range[0] <= 7_000 <= store._window_range[1]
+    assert store.asset_at(7_000).rel_path == Path("asset_7000.jpg")
+    assert service.read_calls
+    assert service.read_calls[-1][1] <= store.MAX_WINDOW_SIZE
+
+
+def test_prioritize_rows_clamps_oversized_visible_range_to_bounded_window() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(10_000)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    service.read_calls.clear()
+    store.prioritize_rows(7_000, 9_999)
+
+    assert store._window_range == (7_000, 8_999)
+    assert service.read_calls[-1] == (7_000, store.MAX_WINDOW_SIZE)
+    assert len(store._row_cache) == store.MAX_WINDOW_SIZE
+
+
+def test_window_fetch_failure_does_not_block_later_visible_range_requests() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(10_000)
+    ]
+    service = _FailingOnceQueryService(assets, fail_offset=6_000)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+    store.prioritize_rows(7_000, 7_060)
+
+    assert service.failed is True
+    assert 7_000 not in store._row_cache
+
+    store.prioritize_rows(7_200, 7_260)
+
+    assert 7_200 in store._row_cache
+    assert store._row_cache[7_200].rel_path == Path("asset_7200.jpg")
+
+
+def test_ensure_row_loaded_recovers_after_deep_window_failure() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(10_000)
+    ]
+    service = _FailingOnceQueryService(assets, fail_offset=6_000)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+
+    assert store.ensure_row_loaded(7_000) is False
+    assert service.failed is True
+
+    assert store.ensure_row_loaded(7_200) is True
+    assert store.asset_at(7_200).rel_path == Path("asset_7200.jpg")
 
 
 def test_reload_current_selection_replays_query_after_query_service_rebind(tmp_path: Path) -> None:

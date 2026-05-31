@@ -7,9 +7,63 @@ from typing import List, Optional
 # Import from .core to avoid circular dependency with __init__.py
 from .core import MediaType
 
+
 class SortOrder(Enum):
     ASC = "ASC"
     DESC = "DESC"
+
+
+class CollectionType(str, Enum):
+    ALL_PHOTOS = "all_photos"
+    ALBUM = "album"
+    FAVORITES = "favorites"
+    VIDEOS = "videos"
+    MAP = "map"
+    PEOPLE = "people"
+    SEARCH = "search"
+
+
+class SortDirection(str, Enum):
+    ASC = "ASC"
+    DESC = "DESC"
+
+
+@dataclass(frozen=True)
+class CollectionQuery:
+    collection_type: CollectionType = CollectionType.ALL_PHOTOS
+    album_path: str | None = None
+    include_subalbums: bool = True
+    media_types: tuple[int, ...] = ()
+    is_favorite: bool | None = None
+    has_gps: bool | None = None
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    search_text: str | None = None
+    sort_key: str = "sort_ts"
+    sort_direction: SortDirection = SortDirection.DESC
+    min_thumbnail_state: str = "ready"
+
+
+@dataclass(frozen=True)
+class PageCursor:
+    sort_ts: int
+    asset_id: str
+
+
+@dataclass(frozen=True)
+class PageResult:
+    rows: list[dict]
+    next_cursor: PageCursor | None
+    total_count: int | None
+    collection_revision: int
+
+
+@dataclass(frozen=True)
+class WindowResult:
+    first: int
+    rows: list[dict]
+    total_count: int
+    collection_revision: int
 
 @dataclass
 class AssetQuery:

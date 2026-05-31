@@ -1,18 +1,20 @@
-from pathlib import Path
 import shutil
+from pathlib import Path
 from typing import Dict, Optional, Set
 
 import numpy as np
-from PySide6.QtCore import QObject, QSize, Signal, QThreadPool, QRunnable, Qt
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 
 from iPhoto.application.ports import EditServicePort
-from iPhoto.infrastructure.services.thumbnail_generator import PillowThumbnailGenerator
-from iPhoto.core.color_resolver import compute_color_statistics
 from iPhoto.core import geo_utils
+from iPhoto.core.color_resolver import compute_color_statistics
 from iPhoto.core.image_filters import apply_adjustments
+from iPhoto.infrastructure.services.performance_events import emit_perf_event, monotonic_ms
+from iPhoto.infrastructure.services.thumbnail_generator import PillowThumbnailGenerator
 from iPhoto.io import sidecar
 from iPhoto.utils import image_loader
+
 
 class ThumbnailWorkerSignals(QObject):
     """Signals emitted by thumbnail generation workers."""
@@ -97,6 +99,7 @@ class ThumbnailCacheService(QObject):
 
         # 1. Memory Check
         if key in self._memory_cache:
+            emit_perf_event("thumbnail_cache_hit", tier="L1", key=key)
             return self._memory_cache[key]
 
         # 2. Disk Check
@@ -105,9 +108,11 @@ class ThumbnailCacheService(QObject):
             pixmap = QPixmap(str(disk_file))
             if not pixmap.isNull():
                 self._add_to_memory(key, pixmap)
+                emit_perf_event("thumbnail_cache_hit", tier="L2", key=key)
                 return pixmap
 
         # 3. Trigger Async Generation if not pending
+        emit_perf_event("thumbnail_cache_miss", key=key, pending=len(self._pending_tasks))
         if key not in self._pending_tasks:
             self._pending_tasks.add(key)
             self._start_generation(path, size)
@@ -131,6 +136,13 @@ class ThumbnailCacheService(QObject):
         # QThreadPool takes ownership of QRunnable. The QRunnable holds 'signals'.
         # Python ref counting should keep 'signals' alive as long as 'worker' is alive.
 
+        emit_perf_event(
+            "thumbnail_generate_started",
+            path=path,
+            width=size.width(),
+            height=size.height(),
+            pending=len(self._pending_tasks),
+        )
         worker = ThumbnailGenerationTask(self._render_thumbnail, path, size, worker_signals)
         self._thread_pool.start(worker)
 
@@ -147,6 +159,13 @@ class ThumbnailCacheService(QObject):
             self._add_to_memory(key, pixmap)
             self._pending_tasks.discard(key)
 
+            emit_perf_event(
+                "thumbnail_generate_finished",
+                path=path,
+                width=size.width(),
+                height=size.height(),
+                pending=len(self._pending_tasks),
+            )
             self.thumbnailReady.emit(path)
 
     def invalidate(self, path: Path, *, size: QSize | None = None):
@@ -209,6 +228,7 @@ class ThumbnailCacheService(QObject):
         self._memory_cache[key] = pixmap
 
     def _render_thumbnail(self, path: Path, size: QSize) -> Optional[QImage]:
+        started = monotonic_ms()
         if size.isEmpty() or not size.isValid():
             return None
 
@@ -225,6 +245,12 @@ class ThumbnailCacheService(QObject):
             qimage = image_loader.qimage_from_pil(pil_image)
 
         if qimage is None or qimage.isNull():
+            emit_perf_event(
+                "thumbnail_generate_failed",
+                path=path,
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                reason="empty_render",
+            )
             return None
 
         if self._edit_service is not None and self._edit_service.sidecar_exists(path):
@@ -246,7 +272,15 @@ class ThumbnailCacheService(QObject):
             qimage = self._apply_geometry_and_crop(qimage, adjustments) or qimage
             qimage = apply_adjustments(qimage, adjustments, color_stats=stats)
 
-        return self._composite_canvas(qimage, size)
+        result = self._composite_canvas(qimage, size)
+        if result is None or result.isNull():
+            emit_perf_event(
+                "thumbnail_generate_failed",
+                path=path,
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                reason="empty_composite",
+            )
+        return result
 
     def _apply_geometry_and_crop(
         self,

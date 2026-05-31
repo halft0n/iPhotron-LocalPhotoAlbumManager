@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
+
 import pytest
+
 from iPhoto.cache.index_store import IndexStore
+from iPhoto.cache.index_store.queries import QueryBuilder
+from iPhoto.config import RECENTLY_DELETED_DIR_NAME
+from iPhoto.domain.models.query import CollectionQuery, CollectionType, PageCursor
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> IndexStore:
@@ -116,6 +123,230 @@ def test_read_geometry_only_sorting(store: IndexStore) -> None:
     results = list(store.read_geometry_only(sort_by_date=True))
     rels = [r["rel"] for r in results]
     assert rels == ["b.jpg", "a.jpg", "c.jpg"]
+
+
+def test_collection_query_sql_pushdown_filters_visible_ready_rows(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    rows = []
+    for index in range(6):
+        timestamp = base + timedelta(seconds=index)
+        rows.append(
+            {
+                "rel": f"Album/photo-{index}.jpg",
+                "id": f"asset-{index}",
+                "dt": timestamp.isoformat(),
+                "ts": int(timestamp.timestamp() * 1_000_000),
+                "parent_album_path": "Album",
+                "media_type": 1 if index == 1 else 0,
+                "is_favorite": 1 if index in {2, 3} else 0,
+                "gps": {"lat": 1.0, "lon": 2.0} if index == 3 else None,
+                "thumbnail_state": "pending" if index == 4 else "ready",
+                "live_role": 1 if index == 5 else 0,
+            }
+        )
+    store.write_rows(rows)
+
+    favorites = CollectionQuery(collection_type=CollectionType.FAVORITES)
+    assert store.count_collection(favorites) == 2
+    assert [row["id"] for row in store.read_collection_window(favorites, 0, 10).rows] == [
+        "asset-3",
+        "asset-2",
+    ]
+
+    videos = CollectionQuery(collection_type=CollectionType.VIDEOS)
+    assert [row["id"] for row in store.read_collection_page(videos, limit=10).rows] == [
+        "asset-1"
+    ]
+
+    gps = CollectionQuery(collection_type=CollectionType.MAP, has_gps=True)
+    assert [row["id"] for row in store.read_collection_window(gps, 0, 10).rows] == [
+        "asset-3"
+    ]
+
+    all_photos = CollectionQuery(collection_type=CollectionType.ALL_PHOTOS)
+    assert [row["id"] for row in store.read_collection_window(all_photos, 0, 10).rows] == [
+        "asset-3",
+        "asset-2",
+        "asset-1",
+        "asset-0",
+    ]
+
+
+def test_collection_query_excludes_recently_deleted_from_normal_views(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        [
+            {
+                "rel": "Album/keep.jpg",
+                "id": "keep",
+                "parent_album_path": "Album",
+                "dt": base.isoformat(),
+                "ts": int(base.timestamp() * 1_000_000),
+                "media_type": 0,
+            },
+            {
+                "rel": f"{RECENTLY_DELETED_DIR_NAME}/deleted.jpg",
+                "id": "deleted",
+                "parent_album_path": RECENTLY_DELETED_DIR_NAME,
+                "dt": (base + timedelta(seconds=1)).isoformat(),
+                "ts": int((base + timedelta(seconds=1)).timestamp() * 1_000_000),
+                "media_type": 0,
+            },
+        ]
+    )
+
+    all_photos = CollectionQuery(collection_type=CollectionType.ALL_PHOTOS)
+    assert [row["id"] for row in store.read_collection_window(all_photos, 0, 10).rows] == [
+        "keep"
+    ]
+
+    trash = CollectionQuery(
+        collection_type=CollectionType.ALBUM,
+        album_path=RECENTLY_DELETED_DIR_NAME,
+    )
+    assert [row["id"] for row in store.read_collection_window(trash, 0, 10).rows] == [
+        "deleted"
+    ]
+
+
+def test_collection_page_uses_sort_ts_keyset_cursor(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"photo-{index}.jpg",
+            "id": f"asset-{index}",
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "media_type": 0,
+        }
+        for index in range(5)
+    )
+
+    query = CollectionQuery(collection_type=CollectionType.ALL_PHOTOS)
+    first = store.read_collection_page(query, limit=2)
+    assert [row["id"] for row in first.rows] == ["asset-4", "asset-3"]
+    assert first.next_cursor == PageCursor(
+        sort_ts=first.rows[-1]["sort_ts"],
+        asset_id="asset-3",
+    )
+
+    second = store.read_collection_page(query, cursor=first.next_cursor, limit=2)
+    assert [row["id"] for row in second.rows] == ["asset-2", "asset-1"]
+
+
+def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Path) -> None:
+    library_root = store.library_root
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"Album/photo-{index}.jpg",
+            "id": f"asset-{index}",
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "parent_album_path": "Album",
+            "media_type": 0,
+        }
+        for index in range(4)
+    )
+
+    query = CollectionQuery(collection_type=CollectionType.ALBUM, album_path="Album")
+
+    assert store.find_row_by_path(query, library_root / "Album" / "photo-3.jpg") == 0
+    assert store.find_row_by_path(query, library_root / "Album" / "photo-1.jpg") == 2
+    assert store.find_row_by_path(query, tmp_path / "outside.jpg") is None
+
+
+def test_collection_window_uses_anchor_seek_for_deep_offsets(
+    store: IndexStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"photo-{index:05d}.jpg",
+            "id": f"asset-{index:05d}",
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "media_type": 0,
+        }
+        for index in range(10_000)
+    )
+
+    offsets: list[int] = []
+    original_build_collection_query = QueryBuilder.build_collection_query
+
+    def recording_build_collection_query(*args, **kwargs):
+        offsets.append(int(kwargs.get("offset", 0) or 0))
+        return original_build_collection_query(*args, **kwargs)
+
+    monkeypatch.setattr(
+        QueryBuilder,
+        "build_collection_query",
+        staticmethod(recording_build_collection_query),
+    )
+
+    query = CollectionQuery(collection_type=CollectionType.ALL_PHOTOS)
+    window = store.read_collection_window(query, first=7_000, limit=120)
+
+    assert window.first == 7_000
+    assert len(window.rows) == 120
+    assert window.rows[0]["id"] == "asset-02999"
+    assert window.rows[-1]["id"] == "asset-02880"
+    assert all(offset == 0 for offset in offsets)
+
+
+def test_album_collection_deep_window_filters_non_visible_rows(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    visible_rows = [
+        {
+            "rel": f"Album/photo-{index:05d}.jpg",
+            "id": f"asset-{index:05d}",
+            "parent_album_path": "Album",
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "media_type": 0,
+        }
+        for index in range(10_000)
+    ]
+    hidden_rows = [
+        {
+            "rel": "Album/pending.jpg",
+            "id": "pending",
+            "parent_album_path": "Album",
+            "dt": (base + timedelta(days=1)).isoformat(),
+            "ts": int((base + timedelta(days=1)).timestamp() * 1_000_000),
+            "media_type": 0,
+            "thumbnail_state": "pending",
+        },
+        {
+            "rel": "Album/motion.mov",
+            "id": "motion",
+            "parent_album_path": "Album",
+            "dt": (base + timedelta(days=2)).isoformat(),
+            "ts": int((base + timedelta(days=2)).timestamp() * 1_000_000),
+            "media_type": 1,
+            "live_role": 1,
+        },
+        {
+            "rel": "Other/photo.jpg",
+            "id": "other",
+            "parent_album_path": "Other",
+            "dt": (base + timedelta(days=3)).isoformat(),
+            "ts": int((base + timedelta(days=3)).timestamp() * 1_000_000),
+            "media_type": 0,
+        },
+    ]
+    store.write_rows([*visible_rows, *hidden_rows])
+
+    query = CollectionQuery(collection_type=CollectionType.ALBUM, album_path="Album")
+    window = store.read_collection_window(query, first=7_000, limit=3)
+
+    assert [row["id"] for row in window.rows] == [
+        "asset-02999",
+        "asset-02998",
+        "asset-02997",
+    ]
+
 
 def test_sync_favorites_non_ascii(store: IndexStore) -> None:
     """Test synchronizing favorites with non-ASCII filenames."""

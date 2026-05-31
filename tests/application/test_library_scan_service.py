@@ -120,6 +120,23 @@ def test_subalbum_scan_prefixes_library_relative_rows(tmp_path: Path) -> None:
     ]
 
 
+def test_scan_album_default_chunk_size_is_large_enough(tmp_path: Path) -> None:
+    library_root = tmp_path / "library"
+    library_root.mkdir()
+    rows = [{"rel": f"{index}.jpg", "id": f"asset-{index}"} for index in range(501)]
+    emitted_sizes: list[int] = []
+    service = LibraryScanService(library_root, scanner=_Scanner(rows))
+
+    result = service.scan_album(
+        library_root,
+        persist_chunks=True,
+        chunk_callback=lambda chunk: emitted_sizes.append(len(chunk)),
+    )
+
+    assert len(result.rows) == 501
+    assert emitted_sizes == [500, 1]
+
+
 def test_finalize_scan_does_not_prune_stale_rows(tmp_path: Path) -> None:
     library_root = tmp_path / "library"
     album_root = library_root / "album"

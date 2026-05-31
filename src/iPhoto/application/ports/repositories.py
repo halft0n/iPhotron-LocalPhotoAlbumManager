@@ -7,6 +7,8 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Protocol
 
+from ...domain.models.query import CollectionQuery, PageCursor, PageResult, WindowResult
+
 
 class AssetRepositoryPort(Protocol):
     """Read and merge rebuildable scan facts for one library."""
@@ -74,6 +76,31 @@ class AssetRepositoryPort(Protocol):
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Return one paginated asset page."""
+
+    def count_collection(self, query: CollectionQuery) -> int:
+        """Return the number of rows matching a collection query."""
+
+    def read_collection_page(
+        self,
+        query: CollectionQuery,
+        cursor: PageCursor | None = None,
+        limit: int = 100,
+    ) -> PageResult:
+        """Return one keyset-paginated collection page."""
+
+    def read_collection_window(
+        self,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a bounded collection window."""
+
+    def find_row_by_path(self, query: CollectionQuery, path: Path) -> int | None:
+        """Return a row index for *path* inside *query*."""
+
+    def find_live_partner(self, asset_id: str) -> dict[str, Any] | None:
+        """Return an asset's Live Photo partner row."""
 
     def apply_live_role_updates(
         self,

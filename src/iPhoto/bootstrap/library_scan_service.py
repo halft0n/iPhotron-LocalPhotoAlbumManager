@@ -194,7 +194,7 @@ class LibraryScanService:
         is_cancelled: Callable[[], bool] | None = None,
         chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None,
         batch_failed_callback: Callable[[int], None] | None = None,
-        chunk_size: int = 50,
+        chunk_size: int = 500,
         persist_chunks: bool = False,
     ) -> ScanLibraryResult:
         """Scan *root* using the shared application use case."""

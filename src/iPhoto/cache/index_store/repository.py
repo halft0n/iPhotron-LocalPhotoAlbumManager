@@ -22,6 +22,13 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
+from ...domain.models.query import CollectionQuery, PageCursor, PageResult, WindowResult
+from ...infrastructure.services.performance_events import (
+    audit_full_scan_query,
+    emit_perf_event,
+    explain_enabled,
+    monotonic_ms,
+)
 from ...people.status import normalize_face_status
 from ...utils.logging import get_logger
 from ...utils.pathutils import ensure_work_dir
@@ -42,6 +49,9 @@ GLOBAL_INDEX_DB_NAME = "global_index.db"
 # conservative chunk size so large scans never hit the limit regardless of
 # the SQLite version in use.
 _SQLITE_PARAM_CHUNK_SIZE = 900
+_DEEP_OFFSET_LIMIT = 5_000
+_DEEP_SEEK_CHUNK_SIZE = 1_024
+_MAX_COLLECTION_ANCHORS_PER_QUERY = 64
 _OMIT_METADATA_VALUE = object()
 
 # Global singleton instance and lock for thread-safe access
@@ -158,6 +168,10 @@ class AssetRepository:
         
         self._db_manager = DatabaseManager(self.path)
         self._conn: Optional[sqlite3.Connection] = None
+        self._collection_anchor_cache: dict[
+            CollectionQuery,
+            dict[int, PageCursor | None],
+        ] = {}
         self._init_db()
 
     def _init_db(self) -> None:
@@ -207,11 +221,13 @@ class AssetRepository:
         with self.transaction() as conn:
             conn.execute("DELETE FROM assets")
             self._insert_rows(conn, rows)
+        self._clear_collection_anchor_cache()
 
     def append_rows(self, rows: Iterable[Dict[str, Any]]) -> None:
         """Merge *rows* into the index, replacing duplicates by ``rel`` key."""
         with self.transaction() as conn:
             self._insert_rows(conn, rows)
+        self._clear_collection_anchor_cache()
 
     def merge_scan_rows(self, rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Merge scanned rows while preserving persisted library-managed state.
@@ -258,6 +274,7 @@ class AssetRepository:
             merged_rows = merge_scan_rows_payload(materialized_rows, existing_rows_by_rel)
             self._insert_rows(conn, merged_rows)
 
+        self._clear_collection_anchor_cache()
         return merged_rows
 
     def upsert_row(self, rel: str, row: Dict[str, Any]) -> None:
@@ -266,6 +283,7 @@ class AssetRepository:
         row_data["rel"] = rel
         with self.transaction() as conn:
             self._insert_rows(conn, [row_data])
+        self._clear_collection_anchor_cache()
 
     def remove_rows(self, rels: Iterable[str]) -> None:
         """Drop any index rows whose ``rel`` key matches *rels*."""
@@ -276,6 +294,7 @@ class AssetRepository:
         placeholders = ", ".join(["?"] * len(removable))
         query = f"DELETE FROM assets WHERE rel IN ({placeholders})"
         self._db_manager.execute_in_transaction(query, removable)
+        self._clear_collection_anchor_cache()
 
     def get_rows_by_rels(self, rels: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         """Return a mapping of ``rel`` → row dict for the given *rels*.
@@ -425,8 +444,15 @@ class AssetRepository:
             sort_by_date: If True, order results by 'dt' descending (newest first).
             filter_hidden: If True, exclude hidden assets (e.g. motion components).
         """
+        audit_full_scan_query(
+            "read_all_full_scan",
+            sort_by_date=sort_by_date,
+            filter_hidden=filter_hidden,
+        )
+        started = monotonic_ms()
         conn = self._db_manager.get_connection()
         should_close = (conn != self._db_manager._conn)
+        yielded = 0
 
         try:
             query = "SELECT * FROM assets"
@@ -445,8 +471,16 @@ class AssetRepository:
             cursor = conn.cursor()
             cursor.execute(query)
             for row in cursor:
+                yielded += 1
                 yield self._db_row_to_dict(row)
         finally:
+            emit_perf_event(
+                "repository_read_all",
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=yielded,
+                sort_by_date=sort_by_date,
+                filter_hidden=filter_hidden,
+            )
             if should_close:
                 conn.close()
 
@@ -508,6 +542,7 @@ class AssetRepository:
 
         conn = self._db_manager.get_connection()
         should_close = (conn != self._db_manager._conn)
+        started = monotonic_ms()
 
         try:
             conn.row_factory = sqlite3.Row
@@ -517,6 +552,14 @@ class AssetRepository:
             results = []
             for row in cursor:
                 results.append(self._db_row_to_dict(row))
+            emit_perf_event(
+                "asset_page_query",
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=len(results),
+                limit=limit,
+                offset=offset,
+                album_path=album_path,
+            )
             return results
         finally:
             if should_close:
@@ -543,11 +586,11 @@ class AssetRepository:
         # Columns needed for the lightweight "viewport-first" loading strategy
         columns = [
             "id", "rel", "aspect_ratio", "media_type", "live_partner_rel",
-            "dur", "year", "month", "dt", "ts", "content_id", "bytes",
+            "dur", "year", "month", "dt", "ts", "sort_ts", "content_id", "bytes",
             "mime", "w", "h", "original_rel_path", "original_album_id",
             "original_album_subpath", "is_favorite", "location", "gps",
-            "face_status",
-            "micro_thumbnail"
+            "face_status", "thumbnail_state", "thumb_cache_key",
+            "index_revision", "micro_thumbnail"
         ]
 
         logger.debug(
@@ -570,12 +613,15 @@ class AssetRepository:
 
         conn = self._db_manager.get_connection()
         should_close = (conn != self._db_manager._conn)
+        started = monotonic_ms()
+        yielded = 0
 
         try:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(query, params)
             for row in cursor:
+                yielded += 1
                 d = dict(row)
                 # Parse GPS if present (stored as JSON string)
                 if d.get("gps"):
@@ -585,6 +631,12 @@ class AssetRepository:
                         d["gps"] = None
                 yield d
         finally:
+            emit_perf_event(
+                "read_geometry_only",
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=yielded,
+                album_path=album_path,
+            )
             if should_close:
                 conn.close()
 
@@ -618,6 +670,8 @@ class AssetRepository:
 
         conn = self._db_manager.get_connection()
         should_close = (conn != self._db_manager._conn)
+        started = monotonic_ms()
+        yielded = 0
 
         try:
             conn.row_factory = sqlite3.Row
@@ -625,8 +679,16 @@ class AssetRepository:
             cursor.execute(query, params)
 
             for row in cursor:
+                yielded += 1
                 yield self._db_row_to_dict(row)
         finally:
+            emit_perf_event(
+                "read_album_assets",
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=yielded,
+                album_path=album_path,
+                include_subalbums=include_subalbums,
+            )
             if should_close:
                 conn.close()
 
@@ -659,11 +721,257 @@ class AssetRepository:
 
         conn = self._db_manager.get_connection()
         should_close = (conn != self._db_manager._conn)
+        started = monotonic_ms()
 
         try:
             cursor = conn.execute(query, params)
             result = cursor.fetchone()
-            return result[0] if result else 0
+            count = result[0] if result else 0
+            emit_perf_event(
+                "repository_count",
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=count,
+                album_path=album_path,
+                include_subalbums=include_subalbums,
+                filter_hidden=filter_hidden,
+            )
+            return count
+        finally:
+            if should_close:
+                conn.close()
+
+    def count_collection(self, query: CollectionQuery) -> int:
+        """Return the number of visible rows matching a collection query."""
+
+        sql, params = QueryBuilder.build_collection_query(
+            query,
+            select_clause="SELECT COUNT(*)",
+            include_order=False,
+        )
+        started = monotonic_ms()
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            result = conn.execute(sql, params).fetchone()
+            count = int(result[0] if result else 0)
+            emit_perf_event(
+                "collection_count_query",
+                collection=query.collection_type.value,
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=count,
+                query_plan=self._explain_query_plan(conn, sql, params),
+            )
+            return count
+        finally:
+            if should_close:
+                conn.close()
+
+    def read_collection_page(
+        self,
+        query: CollectionQuery,
+        cursor: PageCursor | None = None,
+        limit: int = 100,
+    ) -> PageResult:
+        """Return one keyset-paginated collection page."""
+
+        limit = max(0, int(limit))
+        sql, params = QueryBuilder.build_collection_query(
+            query,
+            cursor=cursor,
+            limit=limit,
+        )
+        started = monotonic_ms()
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+            next_cursor = self._page_cursor_from_row(rows[-1]) if rows else None
+            result = PageResult(
+                rows=rows,
+                next_cursor=next_cursor,
+                total_count=self.count_collection(query),
+                collection_revision=self._collection_revision(conn, query),
+            )
+            emit_perf_event(
+                "collection_page_query",
+                collection=query.collection_type.value,
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                rows=len(rows),
+                limit=limit,
+                cursor="present" if cursor else "none",
+                query_plan=self._explain_query_plan(conn, sql, params),
+            )
+            return result
+        finally:
+            if should_close:
+                conn.close()
+
+    def read_collection_window(
+        self,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a bounded window for a gallery collection."""
+
+        first = max(0, int(first))
+        limit = max(0, int(limit))
+
+        started = monotonic_ms()
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            if first > _DEEP_OFFSET_LIMIT:
+                sql, params = self._build_deep_collection_window_query(conn, query, first, limit)
+                if sql is None:
+                    rows: list[dict[str, Any]] = []
+                else:
+                    rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+            else:
+                sql, params = QueryBuilder.build_collection_query(
+                    query,
+                    limit=limit,
+                    offset=first,
+                )
+                rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+            self._remember_collection_window(query, first, rows)
+            result = WindowResult(
+                first=first,
+                rows=rows,
+                total_count=self.count_collection(query),
+                collection_revision=self._collection_revision(conn, query),
+            )
+            emit_perf_event(
+                "collection_window_reload",
+                collection=query.collection_type.value,
+                elapsed_ms=round(monotonic_ms() - started, 3),
+                first=first,
+                limit=limit,
+                rows=len(rows),
+                total_count=result.total_count,
+                query_plan=(
+                    self._explain_query_plan(conn, sql, params)
+                    if sql is not None
+                    else "anchor_not_found"
+                ),
+            )
+            return result
+        finally:
+            if should_close:
+                conn.close()
+
+    def _build_deep_collection_window_query(
+        self,
+        conn: sqlite3.Connection,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> tuple[str | None, list[Any]]:
+        if first <= 0:
+            return QueryBuilder.build_collection_query(query, limit=limit)
+
+        cursor = self._cursor_for_collection_offset(conn, query, first)
+        if cursor is None and first > 0:
+            return None, []
+
+        return QueryBuilder.build_collection_query(query, cursor=cursor, limit=limit)
+
+    def _cursor_for_collection_offset(
+        self,
+        conn: sqlite3.Connection,
+        query: CollectionQuery,
+        offset: int,
+    ) -> PageCursor | None:
+        """Return the keyset cursor immediately before *offset* without deep OFFSET."""
+
+        if offset <= 0:
+            return None
+
+        anchors = self._collection_anchor_cache.setdefault(query, {0: None})
+        anchor_index = max(index for index in anchors if index <= offset)
+        cursor = anchors[anchor_index]
+
+        while anchor_index < offset:
+            step = min(_DEEP_SEEK_CHUNK_SIZE, offset - anchor_index)
+            sql, params = QueryBuilder.build_collection_query(
+                query,
+                cursor=cursor,
+                limit=step,
+            )
+            rows = conn.execute(sql, params).fetchall()
+            if not rows:
+                return None
+
+            anchor_index += len(rows)
+            cursor = self._page_cursor_from_row(dict(rows[-1]))
+            anchors[anchor_index] = cursor
+            self._prune_collection_anchor_cache(query)
+
+            if len(rows) < step:
+                return None
+
+        return cursor
+
+    def find_row_by_path(self, query: CollectionQuery, path: Path) -> int | None:
+        """Return a path's row number within *query* without scanning rows in Python."""
+
+        rel = self._library_relative_path(path)
+        row = self.get_rows_by_rels([rel]).get(rel)
+        if row is None:
+            return None
+        asset_id = str(row.get("id") or "")
+        sort_ts = row.get("sort_ts") if row.get("sort_ts") is not None else row.get("ts")
+        if not asset_id or sort_ts is None:
+            return None
+
+        match_sql, match_params = QueryBuilder.build_collection_query(
+            query,
+            select_clause="SELECT COUNT(*)",
+            include_order=False,
+        )
+        match_sql += " AND rel = ?" if " WHERE " in match_sql else " WHERE rel = ?"
+        match_params.append(rel)
+
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            matched = conn.execute(match_sql, match_params).fetchone()
+            if not matched or int(matched[0] or 0) == 0:
+                return None
+
+            before_where, before_params = QueryBuilder.build_collection_where(query)
+            if query.sort_direction.value == "ASC":
+                before_where.append("(sort_ts < ? OR (sort_ts = ? AND id < ?))")
+            else:
+                before_where.append("(sort_ts > ? OR (sort_ts = ? AND id > ?))")
+            before_params.extend([sort_ts, sort_ts, asset_id])
+            before_sql = "SELECT COUNT(*) FROM assets WHERE " + " AND ".join(before_where)
+            before = conn.execute(before_sql, before_params).fetchone()
+            return int(before[0] if before else 0)
+        finally:
+            if should_close:
+                conn.close()
+
+    def find_live_partner(self, asset_id: str) -> Dict[str, Any] | None:
+        """Return the row for an asset's Live Photo partner, if indexed."""
+
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT partner.*
+                FROM assets AS source
+                JOIN assets AS partner ON partner.rel = source.live_partner_rel
+                WHERE source.id = ?
+                LIMIT 1
+                """,
+                (asset_id,),
+            ).fetchone()
+            return self._db_row_to_dict(row) if row is not None else None
         finally:
             if should_close:
                 conn.close()
@@ -675,6 +983,7 @@ class AssetRepository:
             "UPDATE assets SET is_favorite = ? WHERE rel = ?",
             (val, rel),
         )
+        self._clear_collection_anchor_cache()
 
     def sync_favorites(self, featured_rels: Iterable[str]) -> None:
         """Synchronise the DB 'is_favorite' column with the provided list."""
@@ -722,6 +1031,7 @@ class AssetRepository:
                     "UPDATE assets SET is_favorite = 1 WHERE rel = ?",
                     [(r,) for r in to_add_original],
                 )
+        self._clear_collection_anchor_cache()
 
     def update_location(self, rel: str, location: str) -> None:
         """Update the location string for a single asset."""
@@ -793,6 +1103,7 @@ class AssetRepository:
                 f"UPDATE assets SET {', '.join(update_parts)} WHERE rel = ?",
                 params,
             )
+        self._clear_collection_anchor_cache()
 
     def apply_live_role_updates(
         self,
@@ -807,6 +1118,7 @@ class AssetRepository:
             self._db_manager.execute_in_transaction(
                 "UPDATE assets SET live_role = 0, live_partner_rel = NULL"
             )
+            self._clear_collection_anchor_cache()
             return
 
         with self.transaction() as conn:
@@ -814,6 +1126,7 @@ class AssetRepository:
             query = "UPDATE assets SET live_role = ?, live_partner_rel = ? WHERE rel = ?"
             params = [(role, partner, rel) for rel, role, partner in updates]
             conn.executemany(query, params)
+        self._clear_collection_anchor_cache()
 
     def apply_live_role_updates_for_prefix(
         self,
@@ -832,6 +1145,7 @@ class AssetRepository:
             query = "UPDATE assets SET live_role = ?, live_partner_rel = ? WHERE rel = ?"
             params = [(role, partner, rel) for rel, role, partner in updates]
             conn.executemany(query, params)
+        self._clear_collection_anchor_cache()
 
     def list_albums(self) -> List[str]:
         """Return a list of distinct album paths in the index."""
@@ -870,6 +1184,82 @@ class AssetRepository:
             album_path=album_path,
             include_subalbums=include_subalbums,
         )
+
+    def _collection_revision(
+        self,
+        conn: sqlite3.Connection,
+        query: CollectionQuery,
+    ) -> int:
+        sql, params = QueryBuilder.build_collection_query(
+            query,
+            select_clause="SELECT COALESCE(MAX(index_revision), 0)",
+            include_order=False,
+        )
+        row = conn.execute(sql, params).fetchone()
+        return int(row[0] if row else 0)
+
+    def _explain_query_plan(
+        self,
+        conn: sqlite3.Connection,
+        query: str,
+        params: list[Any],
+    ) -> str | None:
+        if not explain_enabled():
+            return None
+        try:
+            rows = conn.execute(f"EXPLAIN QUERY PLAN {query}", params).fetchall()
+        except sqlite3.Error as exc:
+            return f"explain_failed:{exc}"
+        return " | ".join(" ".join(str(part) for part in row) for row in rows)
+
+    def _remember_collection_window(
+        self,
+        query: CollectionQuery,
+        first: int,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        if not rows:
+            return
+        anchors = self._collection_anchor_cache.setdefault(query, {0: None})
+        if first <= 0:
+            anchors[0] = None
+        cursor = self._page_cursor_from_row(rows[-1])
+        if cursor is not None:
+            anchors[max(0, first) + len(rows)] = cursor
+            self._prune_collection_anchor_cache(query)
+
+    def _prune_collection_anchor_cache(self, query: CollectionQuery) -> None:
+        anchors = self._collection_anchor_cache.get(query)
+        if not anchors or len(anchors) <= _MAX_COLLECTION_ANCHORS_PER_QUERY:
+            return
+        overflow = len(anchors) - _MAX_COLLECTION_ANCHORS_PER_QUERY
+        largest = max(anchors)
+        candidates = [index for index in sorted(anchors) if index not in {0, largest}]
+        for index in candidates[:overflow]:
+            anchors.pop(index, None)
+
+    def _clear_collection_anchor_cache(self) -> None:
+        self._collection_anchor_cache.clear()
+
+    @staticmethod
+    def _page_cursor_from_row(row: dict[str, Any]) -> PageCursor | None:
+        asset_id = row.get("id")
+        sort_ts = row.get("sort_ts") if row.get("sort_ts") is not None else row.get("ts")
+        if asset_id is None or sort_ts is None:
+            return None
+        return PageCursor(sort_ts=int(sort_ts), asset_id=str(asset_id))
+
+    def _library_relative_path(self, path: Path) -> str:
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            return candidate.as_posix()
+        try:
+            return candidate.resolve().relative_to(self.library_root.resolve()).as_posix()
+        except (OSError, ValueError):
+            try:
+                return candidate.relative_to(self.library_root).as_posix()
+            except ValueError:
+                return candidate.as_posix()
 
     # Helper methods delegating to standalone functions in row_mapper
     def _insert_rows(

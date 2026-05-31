@@ -13,7 +13,16 @@ from ..application.ports import AssetRepositoryPort
 from ..cache.index_store import get_global_repository
 from ..config import RECENTLY_DELETED_DIR_NAME
 from ..domain.models.core import MediaType
-from ..domain.models.query import AssetQuery, SortOrder
+from ..domain.models.query import (
+    AssetQuery,
+    CollectionQuery,
+    CollectionType,
+    PageCursor,
+    PageResult,
+    SortDirection,
+    SortOrder,
+    WindowResult,
+)
 from ..path_normalizer import compute_album_path
 
 
@@ -147,6 +156,11 @@ class LibraryAssetQueryService:
         """Return the number of indexed assets matching an application query."""
 
         count_query = self._count_query(query)
+        if self._can_use_collection_api(count_query):
+            count_collection = getattr(self._repository(), "count_collection", None)
+            if callable(count_collection):
+                return count_collection(self._collection_query_for_asset_query(count_query))
+
         if self._requires_in_memory_query(count_query):
             return sum(1 for _row in self._filtered_query_rows(count_query))
 
@@ -167,13 +181,79 @@ class LibraryAssetQueryService:
 
         read_query = copy.deepcopy(query)
         album_path = self.album_path_for(root)
-        if self._requires_in_memory_query(read_query):
+        if self._can_use_collection_api(read_query):
+            read_collection_window = getattr(self._repository(), "read_collection_window", None)
+            if callable(read_collection_window):
+                page_offset = max(0, int(read_query.offset or 0))
+                page_limit = read_query.limit
+                if page_limit is None:
+                    page_limit = self.count_query_assets(self._count_query(read_query))
+                window = read_collection_window(
+                    self._collection_query_for_asset_query(read_query),
+                    page_offset,
+                    max(0, int(page_limit)),
+                )
+                rows = window.rows
+            else:
+                rows = None
+        else:
+            rows = None
+
+        if rows is not None:
+            pass
+        elif self._requires_in_memory_query(read_query):
             rows = self._filtered_query_rows(read_query)
         else:
             filter_params = self._filter_params_for_query(read_query)
             rows = self._read_simple_query_rows(read_query, filter_params)
 
         yield from self._scoped_rows(rows, album_path)
+
+    def count_collection(self, query: CollectionQuery) -> int:
+        """Return the number of assets matching a SQL-first collection query."""
+
+        return self._repository().count_collection(query)
+
+    def read_collection_page(
+        self,
+        query: CollectionQuery,
+        cursor: PageCursor | None = None,
+        limit: int = 100,
+    ) -> PageResult:
+        """Return one SQL-first keyset page for *query*."""
+
+        return self._repository().read_collection_page(query, cursor=cursor, limit=limit)
+
+    def read_collection_window(
+        self,
+        query: CollectionQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a bounded SQL-first window for *query*."""
+
+        return self._repository().read_collection_window(query, first, limit)
+
+    def find_row_by_path(self, query: CollectionQuery | AssetQuery, path: Path) -> int | None:
+        """Locate *path* in a collection without materialising every row."""
+
+        collection_query = (
+            self._collection_query_for_asset_query(query)
+            if isinstance(query, AssetQuery)
+            else query
+        )
+        find_row_by_path = getattr(self._repository(), "find_row_by_path", None)
+        if not callable(find_row_by_path):
+            return None
+        return find_row_by_path(collection_query, path)
+
+    def find_live_partner(self, asset_id: str) -> dict[str, Any] | None:
+        """Return an asset's Live Photo partner row."""
+
+        find_live_partner = getattr(self._repository(), "find_live_partner", None)
+        if not callable(find_live_partner):
+            return None
+        return find_live_partner(asset_id)
 
     def read_geotagged_rows(self) -> Iterator[dict[str, Any]]:
         """Yield library-relative rows that contain GPS metadata."""
@@ -374,11 +454,7 @@ class LibraryAssetQueryService:
         return params or None
 
     def _requires_in_memory_query(self, query: AssetQuery) -> bool:
-        if query.asset_ids or query.album_id or query.has_gps is not None:
-            return True
-        if query.date_from is not None or query.date_to is not None:
-            return True
-        if query.is_favorite is False:
+        if query.asset_ids or query.album_id:
             return True
         if query.order != SortOrder.DESC or not self._sort_by_date(query):
             return True
@@ -395,6 +471,50 @@ class LibraryAssetQueryService:
         if media_values not in simple_sets:
             return True
         return query.is_favorite is True and media_values == {MediaType.LIVE_PHOTO.value}
+
+    def _can_use_collection_api(self, query: AssetQuery) -> bool:
+        if query.asset_ids or query.album_id:
+            return False
+        if query.order != SortOrder.DESC or not self._sort_by_date(query):
+            return False
+        media_values = {media_type.value for media_type in query.media_types}
+        if MediaType.LIVE_PHOTO.value in media_values:
+            return False
+        return media_values <= {MediaType.IMAGE.value, MediaType.PHOTO.value, MediaType.VIDEO.value}
+
+    def _collection_query_for_asset_query(self, query: AssetQuery) -> CollectionQuery:
+        media_values = {media_type.value for media_type in query.media_types}
+        media_types: tuple[int, ...] = ()
+        if media_values == {MediaType.VIDEO.value}:
+            media_types = (1,)
+        elif media_values and media_values <= {MediaType.IMAGE.value, MediaType.PHOTO.value}:
+            media_types = (0,)
+        elif media_values == {MediaType.IMAGE.value, MediaType.PHOTO.value, MediaType.VIDEO.value}:
+            media_types = (0, 1)
+
+        collection_type = CollectionType.ALL_PHOTOS
+        if query.album_path:
+            collection_type = CollectionType.ALBUM
+        elif query.is_favorite is True:
+            collection_type = CollectionType.FAVORITES
+        elif media_types == (1,):
+            collection_type = CollectionType.VIDEOS
+        elif query.has_gps is True:
+            collection_type = CollectionType.MAP
+
+        return CollectionQuery(
+            collection_type=collection_type,
+            album_path=query.album_path,
+            include_subalbums=query.include_subalbums,
+            media_types=media_types,
+            is_favorite=query.is_favorite,
+            has_gps=query.has_gps,
+            date_from=query.date_from,
+            date_to=query.date_to,
+            sort_key="sort_ts",
+            sort_direction=SortDirection.DESC,
+            min_thumbnail_state="ready",
+        )
 
     @staticmethod
     def _slice_rows(

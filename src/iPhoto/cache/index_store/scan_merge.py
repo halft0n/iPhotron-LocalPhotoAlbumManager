@@ -18,6 +18,7 @@ _PRESERVED_SCAN_STATE_FIELDS = (
     "original_album_subpath",
     "live_role",
     "live_partner_rel",
+    "is_deleted",
 )
 
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ...infrastructure.services.performance_events import emit_perf_event, monotonic_ms
 from ..ports import AssetRepositoryPort, MediaScannerPort
 
 LOGGER = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class ScanLibraryRequest:
     row_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None
     batch_failed_callback: Callable[[int], None] | None = None
-    chunk_size: int = 50
+    chunk_size: int = 500
     persist_chunks: bool = True
 
 
@@ -96,14 +97,26 @@ class ScanLibraryUseCase:
         chunk: list[dict[str, Any]],
         request: ScanLibraryRequest,
     ) -> int:
+        started = monotonic_ms()
         try:
             emitted_chunk = self._asset_repository.merge_scan_rows(chunk)
         except Exception:
             LOGGER.exception("Failed to persist scan chunk of %s items", len(chunk))
+            emit_perf_event(
+                "scan_batch_failed",
+                rows=len(chunk),
+                elapsed_ms=round(monotonic_ms() - started, 3),
+            )
             if request.batch_failed_callback is not None:
                 request.batch_failed_callback(len(chunk))
             return len(chunk)
 
+        emit_perf_event(
+            "scan_batch_committed",
+            rows=len(emitted_chunk),
+            requested_rows=len(chunk),
+            elapsed_ms=round(monotonic_ms() - started, 3),
+        )
         if request.chunk_callback is not None:
             request.chunk_callback(emitted_chunk)
         return 0
