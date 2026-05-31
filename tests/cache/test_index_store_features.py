@@ -141,6 +141,7 @@ def test_collection_query_sql_pushdown_filters_visible_ready_rows(store: IndexSt
                 "is_favorite": 1 if index in {2, 3} else 0,
                 "gps": {"lat": 1.0, "lon": 2.0} if index == 3 else None,
                 "thumbnail_state": "pending" if index == 4 else "ready",
+                "thumb_cache_key": f"thumb-{index}" if index != 4 else None,
                 "live_role": 1 if index == 5 else 0,
             }
         )
@@ -172,6 +173,56 @@ def test_collection_query_sql_pushdown_filters_visible_ready_rows(store: IndexSt
     ]
 
 
+def test_ready_row_requires_thumbnail_payload(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        [
+            {
+                "rel": "ready.jpg",
+                "id": "ready",
+                "dt": base.isoformat(),
+                "ts": int(base.timestamp() * 1_000_000),
+                "media_type": 0,
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-ready",
+            },
+            {
+                "rel": "no-thumb.jpg",
+                "id": "no-thumb",
+                "dt": (base + timedelta(seconds=1)).isoformat(),
+                "ts": int((base + timedelta(seconds=1)).timestamp() * 1_000_000),
+                "media_type": 0,
+                "thumbnail_state": "ready",
+            },
+        ]
+    )
+
+    rows = store.read_collection_window(CollectionQuery(), 0, 10).rows
+
+    assert [row["id"] for row in rows] == ["ready"]
+    assert store.get_rows_by_rels(["no-thumb.jpg"])["no-thumb.jpg"]["thumbnail_state"] == "stale"
+
+
+def test_pending_failed_stale_rows_are_hidden_from_gallery_collection(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"{state}.jpg",
+            "id": state,
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "media_type": 0,
+            "thumbnail_state": state,
+            "thumb_cache_key": f"thumb-{state}" if state == "ready" else None,
+        }
+        for index, state in enumerate(("ready", "pending", "failed", "stale"))
+    )
+
+    rows = store.read_collection_window(CollectionQuery(), 0, 10).rows
+
+    assert [row["id"] for row in rows] == ["ready"]
+
+
 def test_collection_query_excludes_recently_deleted_from_normal_views(store: IndexStore) -> None:
     base = datetime(2024, 1, 1)
     store.write_rows(
@@ -183,6 +234,7 @@ def test_collection_query_excludes_recently_deleted_from_normal_views(store: Ind
                 "dt": base.isoformat(),
                 "ts": int(base.timestamp() * 1_000_000),
                 "media_type": 0,
+                "thumb_cache_key": "thumb-keep",
             },
             {
                 "rel": f"{RECENTLY_DELETED_DIR_NAME}/deleted.jpg",
@@ -191,6 +243,7 @@ def test_collection_query_excludes_recently_deleted_from_normal_views(store: Ind
                 "dt": (base + timedelta(seconds=1)).isoformat(),
                 "ts": int((base + timedelta(seconds=1)).timestamp() * 1_000_000),
                 "media_type": 0,
+                "thumb_cache_key": "thumb-deleted",
             },
         ]
     )
@@ -218,6 +271,7 @@ def test_collection_page_uses_sort_ts_keyset_cursor(store: IndexStore) -> None:
             "dt": (base + timedelta(seconds=index)).isoformat(),
             "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
             "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
         }
         for index in range(5)
     )
@@ -245,6 +299,7 @@ def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Pa
             "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
             "parent_album_path": "Album",
             "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
         }
         for index in range(4)
     )
@@ -268,6 +323,7 @@ def test_collection_window_uses_anchor_seek_for_deep_offsets(
             "dt": (base + timedelta(seconds=index)).isoformat(),
             "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
             "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
         }
         for index in range(10_000)
     )
@@ -305,6 +361,7 @@ def test_album_collection_deep_window_filters_non_visible_rows(store: IndexStore
             "dt": (base + timedelta(seconds=index)).isoformat(),
             "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
             "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
         }
         for index in range(10_000)
     ]
@@ -334,6 +391,7 @@ def test_album_collection_deep_window_filters_non_visible_rows(store: IndexStore
             "dt": (base + timedelta(days=3)).isoformat(),
             "ts": int((base + timedelta(days=3)).timestamp() * 1_000_000),
             "media_type": 0,
+            "thumb_cache_key": "thumb-other",
         },
     ]
     store.write_rows([*visible_rows, *hidden_rows])

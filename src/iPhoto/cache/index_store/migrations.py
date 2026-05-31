@@ -81,14 +81,42 @@ class SchemaMigrator:
                 is_favorite INTEGER DEFAULT 0,
                 is_deleted INTEGER DEFAULT 0,
                 has_gps INTEGER DEFAULT 0,
-                thumbnail_state TEXT DEFAULT 'ready',
+                thumbnail_state TEXT DEFAULT 'stale',
                 location TEXT,
                 micro_thumbnail BLOB,
                 thumb_cache_key TEXT,
                 thumb_updated_at INTEGER DEFAULT 0,
                 thumb_error TEXT,
+                scan_job_id TEXT,
                 index_revision INTEGER DEFAULT 0,
                 face_status TEXT
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scan_jobs (
+                job_id TEXT PRIMARY KEY,
+                root TEXT,
+                scope TEXT,
+                status TEXT,
+                stage TEXT,
+                found_count INTEGER DEFAULT 0,
+                processed_count INTEGER DEFAULT 0,
+                visible_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                started_at INTEGER,
+                updated_at INTEGER,
+                finished_at INTEGER
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scan_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT,
+                event_type TEXT,
+                payload_json TEXT,
+                created_at INTEGER
             )
         """)
 
@@ -113,6 +141,29 @@ class SchemaMigrator:
 
         # Define all columns that should exist with their SQL definitions
         required_columns = {
+            "parent_album_path": "ALTER TABLE assets ADD COLUMN parent_album_path TEXT",
+            "ts": "ALTER TABLE assets ADD COLUMN ts INTEGER",
+            "sort_ts": "ALTER TABLE assets ADD COLUMN sort_ts INTEGER",
+            "bytes": "ALTER TABLE assets ADD COLUMN bytes INTEGER",
+            "make": "ALTER TABLE assets ADD COLUMN make TEXT",
+            "model": "ALTER TABLE assets ADD COLUMN model TEXT",
+            "lens": "ALTER TABLE assets ADD COLUMN lens TEXT",
+            "iso": "ALTER TABLE assets ADD COLUMN iso INTEGER",
+            "f_number": "ALTER TABLE assets ADD COLUMN f_number REAL",
+            "exposure_time": "ALTER TABLE assets ADD COLUMN exposure_time REAL",
+            "exposure_compensation": "ALTER TABLE assets ADD COLUMN exposure_compensation REAL",
+            "focal_length": "ALTER TABLE assets ADD COLUMN focal_length REAL",
+            "w": "ALTER TABLE assets ADD COLUMN w INTEGER",
+            "h": "ALTER TABLE assets ADD COLUMN h INTEGER",
+            "gps": "ALTER TABLE assets ADD COLUMN gps TEXT",
+            "content_id": "ALTER TABLE assets ADD COLUMN content_id TEXT",
+            "frame_rate": "ALTER TABLE assets ADD COLUMN frame_rate REAL",
+            "codec": "ALTER TABLE assets ADD COLUMN codec TEXT",
+            "still_image_time": "ALTER TABLE assets ADD COLUMN still_image_time REAL",
+            "dur": "ALTER TABLE assets ADD COLUMN dur REAL",
+            "original_rel_path": "ALTER TABLE assets ADD COLUMN original_rel_path TEXT",
+            "original_album_id": "ALTER TABLE assets ADD COLUMN original_album_id TEXT",
+            "original_album_subpath": "ALTER TABLE assets ADD COLUMN original_album_subpath TEXT",
             "micro_thumbnail": "ALTER TABLE assets ADD COLUMN micro_thumbnail BLOB",
             "live_role": "ALTER TABLE assets ADD COLUMN live_role INTEGER DEFAULT 0",
             "live_partner_rel": "ALTER TABLE assets ADD COLUMN live_partner_rel TEXT",
@@ -127,10 +178,9 @@ class SchemaMigrator:
             "thumb_cache_key": "ALTER TABLE assets ADD COLUMN thumb_cache_key TEXT",
             "thumb_updated_at": "ALTER TABLE assets ADD COLUMN thumb_updated_at INTEGER DEFAULT 0",
             "thumb_error": "ALTER TABLE assets ADD COLUMN thumb_error TEXT",
-            "sort_ts": "ALTER TABLE assets ADD COLUMN sort_ts INTEGER",
+            "scan_job_id": "ALTER TABLE assets ADD COLUMN scan_job_id TEXT",
             "index_revision": "ALTER TABLE assets ADD COLUMN index_revision INTEGER DEFAULT 0",
             "location": "ALTER TABLE assets ADD COLUMN location TEXT",
-            "parent_album_path": "ALTER TABLE assets ADD COLUMN parent_album_path TEXT",
             "face_status": "ALTER TABLE assets ADD COLUMN face_status TEXT",
         }
 
@@ -226,6 +276,7 @@ class SchemaMigrator:
             "CREATE INDEX IF NOT EXISTS idx_assets_rel_lookup ON assets (rel)",
             "CREATE INDEX IF NOT EXISTS idx_assets_id_lookup ON assets (id)",
             "CREATE INDEX IF NOT EXISTS idx_assets_revision ON assets (index_revision)",
+            "CREATE INDEX IF NOT EXISTS idx_scan_events_job ON scan_events (job_id, event_id)",
         ]
 
         for index_sql in indexes:

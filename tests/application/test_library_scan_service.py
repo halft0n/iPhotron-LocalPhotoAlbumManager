@@ -123,7 +123,15 @@ def test_subalbum_scan_prefixes_library_relative_rows(tmp_path: Path) -> None:
 def test_scan_album_default_chunk_size_is_large_enough(tmp_path: Path) -> None:
     library_root = tmp_path / "library"
     library_root.mkdir()
-    rows = [{"rel": f"{index}.jpg", "id": f"asset-{index}"} for index in range(501)]
+    rows = [
+        {
+            "rel": f"{index}.jpg",
+            "id": f"asset-{index}",
+            "thumbnail_state": "ready",
+            "micro_thumbnail": b"thumb",
+        }
+        for index in range(501)
+    ]
     emitted_sizes: list[int] = []
     service = LibraryScanService(library_root, scanner=_Scanner(rows))
 

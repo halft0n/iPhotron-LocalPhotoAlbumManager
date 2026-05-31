@@ -102,3 +102,159 @@ Known constraints:
 - Phase 3 will still improve placeholder quality by enforcing thumbnail-ready
   visible rows, but it is no longer expected to fix deep-scroll loading stalls;
   that bug is handled in this branch.
+
+---
+
+# Phase 3/4 Follow-up Log
+
+Date: 2026-05-31
+Branch: `codex/large-library-performance`
+
+## Scope
+
+This follow-up continues the large-library performance migration after the
+Phase 0-2 foundation. It implements the first production-ready slice of Phase 3
+and a minimal Phase 4 scan-job baseline:
+
+- visible collection rows now require a ready thumbnail payload
+- scan rows are classified as ready/failed/stale instead of treating missing
+  thumbnails as normal gallery media
+- scan chunk publication is ready-only while preserving the existing Qt
+  `scanChunkReady(Path, list)` transport
+- Gallery gets a single window-result path so visible-window reloads do not
+  need a separate count query before fetching rows
+- scan jobs/events are persisted for future observable scan pipeline work
+
+The existing deletion of `docs/requirements/INITIAL_SCAN_LARGE_LIBRARY_STABILITY.md`
+was preserved and not modified.
+
+## Completed Changes
+
+- Added `ThumbnailState` and `ThumbnailReadyResult` to the query model surface.
+- Added `ScanStage`, `ScanJob`, and `ScanBatchCommitted` DTOs under
+  `iPhoto.domain.models.scan`.
+- Added `scan_jobs` and `scan_events` tables plus repository APIs:
+  `create_scan_job()`, `update_scan_job_stage()`, and `append_scan_event()`.
+- Changed SQLite migration and row mapping so missing/blank thumbnail state
+  becomes `stale` unless a row already has `micro_thumbnail` or
+  `thumb_cache_key`; old `ready` rows without a payload are also demoted to
+  `stale`.
+- Changed collection SQL so `min_thumbnail_state='ready'` also requires
+  `micro_thumbnail IS NOT NULL OR thumb_cache_key` before a row can enter a
+  normal media grid.
+- Added scan-time thumbnail classification in `scanner_adapter`:
+  successful thumbnail generation writes `thumbnail_state='ready'` and
+  `micro_thumbnail`; failures write `thumbnail_state='failed'` and
+  `thumb_error`.
+- Changed scan chunk publication so GUI callbacks only receive ready rows; DB
+  merge still persists the full batch, including failed rows for diagnostics.
+- Added scan job stage bookkeeping to `LibraryScanService.scan_album()`.
+- Increased `ScannerWorker.SCAN_CHUNK_SIZE` from 10 to 500.
+- Added `LibraryAssetQueryService.read_query_asset_window()` to return scoped
+  `WindowResult` rows, total count, and collection revision in one call.
+- Changed `GalleryCollectionStore` to prefer the window-result API and keep a
+  fallback for legacy/fake query surfaces.
+- Added 16ms `prioritize_rows()` coalescing in `GalleryListModelAdapter`.
+- Fixed Gallery thumbnail display after the thumbnail-ready migration:
+  scan-row `micro_thumbnail` bytes are decoded to `QImage` for fallback drawing,
+  while `DecorationRole` still goes through `ThumbnailCacheService.get_thumbnail()`
+  so 512x512 thumbnails are scheduled, cached, and repainted when ready.
+
+## Verification
+
+Commands run:
+
+```bash
+.venv/bin/pytest tests/cache/test_index_store_features.py tests/test_scanner_adapter.py tests/application/test_library_scan_service.py
+```
+
+Result:
+
+- 33 passed
+- 1 warning from pytest config: unknown `env` option
+
+```bash
+.venv/bin/pytest tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/test_asset_grid_scroll.py
+```
+
+Result:
+
+- 39 passed
+- 1 warning from pytest config: unknown `env` option
+
+```bash
+.venv/bin/pytest tests/performance/test_refactor_performance_baseline.py
+```
+
+Result:
+
+- 3 passed
+- 1 warning from pytest config: unknown `env` option
+
+Additional safety checks:
+
+```bash
+.venv/bin/pytest tests/application/test_library_asset_query_service.py tests/library/test_scanner_worker.py
+python3 -m compileall -q src/iPhoto
+git diff --check
+```
+
+Result:
+
+- 16 passed for the extra pytest command
+- compileall passed
+- diff whitespace check passed
+
+Final thumbnail display regression checks:
+
+```bash
+.venv/bin/pytest tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/test_asset_grid_scroll.py
+.venv/bin/pytest tests/performance/test_refactor_performance_baseline.py tests/test_thumbnail_cache_service.py tests/application/test_library_asset_query_service.py tests/library/test_scanner_worker.py
+python3 -m compileall -q src/iPhoto
+git diff --check
+```
+
+Result:
+
+- 39 passed for Gallery/scroll tests
+- 21 passed for performance, thumbnail cache, query-service, and scanner-worker tests
+- compileall passed
+- diff whitespace check passed
+
+## Handoff
+
+Current behavior to preserve:
+
+- Normal gallery collections should never show `pending`, `failed`, or `stale`
+  rows.
+- A `ready` row must have `micro_thumbnail` or `thumb_cache_key`.
+- Scanner callbacks are ready-only, but repository merge still records failed
+  rows for retry/diagnostics.
+- Mid-scroll scan refresh updates count/revision and keeps the active visible
+  window stable instead of jumping to newly inserted top rows.
+- Gallery uses micro thumbnails only as a temporary fallback; `DecorationRole`
+  must continue to request 512x512 thumbnails from `ThumbnailCacheService`.
+- Existing `scanChunkReady` and `scanFinished` signals remain the GUI transport
+  for now.
+
+Next recommended work:
+
+- Add visible-window-first backfill for `stale` rows so old libraries recover
+  thumbnails without blocking first paint.
+- Move scan thumbnail generation to a cancellable/priority-aware queue with
+  bounded concurrency and failure cooldown.
+- Promote `ScanBatchCommitted` from internal DTO/event payload to an explicit
+  Qt/application transport once all GUI consumers are ready.
+- Expand scan job stages beyond the current coarse baseline so discover,
+  metadata, thumbnail, commit, publish, and derived jobs have accurate timings.
+- Add stricter query-plan assertions for ready-thumbnail collection queries and
+  larger synthetic 100k/1M opt-in benchmarks.
+
+Known constraints:
+
+- `PageResult` and `WindowResult` still carry dict rows for compatibility.
+- Scan-time thumbnail readiness currently stores micro thumbnails first; L2
+  cache-key-only ready rows are supported by query semantics but need a fuller
+  cache-key production path.
+- The Gallery window API fallback remains necessary for tests and legacy query
+  surfaces that do not yet implement `read_query_asset_window()`.

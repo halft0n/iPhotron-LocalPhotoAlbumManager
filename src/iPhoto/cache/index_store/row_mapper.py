@@ -33,7 +33,7 @@ def insert_rows(
         "live_role", "live_partner_rel", "aspect_ratio", "year", "month",
         "media_type", "is_favorite", "is_deleted", "has_gps", "thumbnail_state",
         "location", "micro_thumbnail", "thumb_cache_key", "thumb_updated_at",
-        "thumb_error", "index_revision", "face_status"
+        "thumb_error", "scan_job_id", "index_revision", "face_status"
     ]
     placeholders = ", ".join(["?"] * len(columns))
     query = (
@@ -54,7 +54,7 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
     sort_ts = row.get("sort_ts")
     if sort_ts is None:
         sort_ts = row.get("ts")
-    thumbnail_state = row.get("thumbnail_state") or "ready"
+    thumbnail_state = _thumbnail_state_for_row(row)
 
     # Compute parent_album_path from rel if not provided
     rel = row.get("rel")
@@ -107,9 +107,28 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
         row.get("thumb_cache_key"),
         row.get("thumb_updated_at", 0),
         row.get("thumb_error"),
+        row.get("scan_job_id"),
         row.get("index_revision", 0),
         row.get("face_status"),
     ]
+
+
+def _thumbnail_state_for_row(row: Dict[str, Any]) -> str:
+    state = str(row.get("thumbnail_state") or "").strip().lower()
+    if not state:
+        state = "ready" if _has_thumbnail_payload(row) else "stale"
+    if state == "ready" and not _has_thumbnail_payload(row):
+        return "stale"
+    if state not in {"ready", "pending", "failed", "stale"}:
+        return "stale"
+    return state
+
+
+def _has_thumbnail_payload(row: Dict[str, Any]) -> bool:
+    thumb_key = row.get("thumb_cache_key")
+    return row.get("micro_thumbnail") is not None or (
+        isinstance(thumb_key, str) and bool(thumb_key.strip())
+    )
 
 
 def db_row_to_dict(db_row: sqlite3.Row) -> Dict[str, Any]:

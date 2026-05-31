@@ -41,7 +41,15 @@ def temp_album(tmp_path):
 
 def _fake_rows(n=15):
     """Return *n* fake scan rows."""
-    return [{"rel": f"test_{i}.jpg", "mime": "image/jpeg"} for i in range(n)]
+    return [
+        {
+            "rel": f"test_{i}.jpg",
+            "mime": "image/jpeg",
+            "thumbnail_state": "ready",
+            "micro_thumbnail": b"thumb",
+        }
+        for i in range(n)
+    ]
 
 
 def _patch_scan_and_repo(fake_rows, repo_side_effect=None):
@@ -173,7 +181,7 @@ def test_scanner_worker_scan_continues_after_partial_failures(temp_album, qapp):
             raise Exception("First chunk failed")
         return list(chunk)
 
-    rows = _fake_rows(25)  # enough for multiple chunks
+    rows = _fake_rows(501)  # enough for multiple chunks
     p_scan, p_repo, p_cache, mock_store = _patch_scan_and_repo(
         rows, repo_side_effect=mock_merge_scan_rows,
     )

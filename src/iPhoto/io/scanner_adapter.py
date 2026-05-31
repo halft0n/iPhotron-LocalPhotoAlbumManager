@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Iterator, Dict, Any, List, Optional, Callable, Iterable
+import io
 import os
 import queue
 import threading
@@ -11,6 +12,7 @@ import logging
 import mimetypes
 
 from ..application.interfaces import IMetadataProvider, IThumbnailGenerator
+from ..domain.models.query import ThumbnailReadyResult, ThumbnailState
 from ..infrastructure.services.metadata_provider import ExifToolMetadataProvider
 from ..infrastructure.services.thumbnail_generator import PillowThumbnailGenerator
 from ..people import initial_face_status
@@ -29,6 +31,51 @@ _thumbnail_generator = PillowThumbnailGenerator()
 _IMAGE_EXTENSIONS = set(getattr(ExifToolMetadataProvider, "_IMAGE_EXTENSIONS", ()))
 _VIDEO_EXTENSIONS = set(getattr(ExifToolMetadataProvider, "_VIDEO_EXTENSIONS", ()))
 LOGGER = logging.getLogger(__name__)
+
+
+def ensure_scan_thumbnail(path: Path, asset_id: str, size: tuple[int, int] = (256, 256)) -> ThumbnailReadyResult:
+    """Return a ready thumbnail payload for scan-time visible indexing."""
+
+    try:
+        micro_thumbnail = _thumbnail_generator.generate_micro_thumbnail(path)
+        if micro_thumbnail:
+            payload = (
+                bytes(micro_thumbnail)
+                if isinstance(micro_thumbnail, (bytes, bytearray, memoryview))
+                else str(micro_thumbnail).encode("utf-8")
+            )
+            return ThumbnailReadyResult(
+                state=ThumbnailState.READY,
+                micro_thumbnail=payload,
+            )
+
+        generated = _thumbnail_generator.generate(path, size)
+        if generated is None:
+            return ThumbnailReadyResult(
+                state=ThumbnailState.FAILED,
+                thumb_error="thumbnail_unavailable",
+            )
+        with io.BytesIO() as buffer:
+            generated.save(buffer, format="JPEG")
+            payload = buffer.getvalue()
+        if not payload:
+            return ThumbnailReadyResult(
+                state=ThumbnailState.FAILED,
+                thumb_error="thumbnail_empty",
+            )
+        return ThumbnailReadyResult(state=ThumbnailState.READY, micro_thumbnail=payload)
+    except Exception as exc:
+        LOGGER.warning(
+            "Scan thumbnail generation failed for %s (%s): %s",
+            path,
+            asset_id,
+            exc,
+            exc_info=True,
+        )
+        return ThumbnailReadyResult(
+            state=ThumbnailState.FAILED,
+            thumb_error=f"{type(exc).__name__}: {exc}",
+        )
 
 
 class FileDiscoveryThread(threading.Thread):
@@ -165,19 +212,14 @@ def process_media_paths(
                     exc_info=True,
                 )
 
-            if row.get("media_type") == 0:
-                try:
-                    mt = _thumbnail_generator.generate_micro_thumbnail(path)
-                except Exception as exc:
-                    LOGGER.warning(
-                        "Micro-thumbnail generation failed for %s; keeping asset indexed without thumbnail: %s",
-                        path,
-                        exc,
-                        exc_info=True,
-                    )
-                else:
-                    if mt:
-                        row["micro_thumbnail"] = mt
+            thumbnail = ensure_scan_thumbnail(path, str(row.get("id") or path))
+            row["thumbnail_state"] = thumbnail.state.value
+            if thumbnail.micro_thumbnail is not None:
+                row["micro_thumbnail"] = thumbnail.micro_thumbnail
+            if thumbnail.thumb_cache_key:
+                row["thumb_cache_key"] = thumbnail.thumb_cache_key
+            if thumbnail.thumb_error:
+                row["thumb_error"] = thumbnail.thumb_error
 
             yield row
 

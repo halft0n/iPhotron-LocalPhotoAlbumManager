@@ -209,6 +209,42 @@ class LibraryAssetQueryService:
 
         yield from self._scoped_rows(rows, album_path)
 
+    def read_query_asset_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return one scoped gallery window with total count and revision."""
+
+        read_query = copy.deepcopy(query)
+        read_query.offset = max(0, int(first))
+        read_query.limit = max(0, int(limit))
+        album_path = self.album_path_for(root)
+        if self._can_use_collection_api(read_query):
+            read_collection_window = getattr(self._repository(), "read_collection_window", None)
+            if callable(read_collection_window):
+                window = read_collection_window(
+                    self._collection_query_for_asset_query(read_query),
+                    read_query.offset,
+                    read_query.limit or 0,
+                )
+                return WindowResult(
+                    first=window.first,
+                    rows=list(self._scoped_rows(window.rows, album_path)),
+                    total_count=window.total_count,
+                    collection_revision=window.collection_revision,
+                )
+
+        rows = list(self.read_query_asset_rows(root, read_query))
+        return WindowResult(
+            first=read_query.offset,
+            rows=rows,
+            total_count=self.count_query_assets(self._count_query(read_query)),
+            collection_revision=0,
+        )
+
     def count_collection(self, query: CollectionQuery) -> int:
         """Return the number of assets matching a SQL-first collection query."""
 

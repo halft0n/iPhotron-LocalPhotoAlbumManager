@@ -28,6 +28,21 @@ class SortDirection(str, Enum):
     DESC = "DESC"
 
 
+class ThumbnailState(str, Enum):
+    READY = "ready"
+    PENDING = "pending"
+    FAILED = "failed"
+    STALE = "stale"
+
+
+@dataclass(frozen=True)
+class ThumbnailReadyResult:
+    state: ThumbnailState
+    micro_thumbnail: bytes | None = None
+    thumb_cache_key: str | None = None
+    thumb_error: str | None = None
+
+
 @dataclass(frozen=True)
 class CollectionQuery:
     collection_type: CollectionType = CollectionType.ALL_PHOTOS
@@ -41,7 +56,7 @@ class CollectionQuery:
     search_text: str | None = None
     sort_key: str = "sort_ts"
     sort_direction: SortDirection = SortDirection.DESC
-    min_thumbnail_state: str = "ready"
+    min_thumbnail_state: str = ThumbnailState.READY.value
 
 
 @dataclass(frozen=True)

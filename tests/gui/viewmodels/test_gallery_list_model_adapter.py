@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtGui import QImage
 
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.gui.ui.models.roles import Roles
@@ -93,7 +94,67 @@ def test_row_for_path_delegates_to_store(adapter, mock_store):
 
 def test_prioritize_rows_delegates_to_store(adapter, mock_store):
     adapter.prioritize_rows(10, 25)
+    adapter._flush_pending_prioritize_rows()
     mock_store.prioritize_rows.assert_called_once_with(10, 25)
+
+
+def test_prioritize_rows_coalesces_fast_scroll_requests(adapter, mock_store):
+    adapter.prioritize_rows(10, 25)
+    adapter.prioritize_rows(20, 60)
+    adapter.prioritize_rows(5, 15)
+    adapter._flush_pending_prioritize_rows()
+
+    mock_store.prioritize_rows.assert_called_once_with(5, 60)
+
+
+def test_decoration_role_uses_full_size_thumbnail_even_with_micro_fallback(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    micro = QImage(2, 2, QImage.Format.Format_RGB32)
+    full_size = object()
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
+    mock_thumb_service.get_thumbnail.return_value = full_size
+
+    result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
+
+    assert result is full_size
+    mock_thumb_service.get_thumbnail.assert_called_once()
+
+
+def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    micro = QImage(2, 2, QImage.Format.Format_RGB32)
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
+    mock_thumb_service.get_thumbnail.return_value = None
+
+    index = adapter.index(0, 0)
+
+    assert adapter.data(index, Qt.DecorationRole) is None
+    assert adapter.data(index, Roles.MICRO_THUMBNAIL) is micro
+    mock_thumb_service.get_thumbnail.assert_called_once()
+
+
+def test_decoration_role_schedules_full_size_even_when_micro_thumbnail_is_not_drawable(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    fallback = object()
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = _make_dto(micro_thumbnail=b"jpeg-bytes")
+    mock_thumb_service.get_thumbnail.return_value = fallback
+
+    result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
+
+    assert result is fallback
+    mock_thumb_service.get_thumbnail.assert_called_once()
 
 
 def test_rebind_asset_query_service_updates_store(adapter, mock_store):

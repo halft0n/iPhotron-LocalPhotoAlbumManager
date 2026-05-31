@@ -3,8 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+from PySide6.QtGui import QImage
+
 from iPhoto.domain.models import Asset, MediaType
-from iPhoto.domain.models.query import AssetQuery
+from iPhoto.domain.models.query import AssetQuery, WindowResult
+from iPhoto.gui.viewmodels.asset_dto_converter import scan_row_to_dto
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
 from iPhoto.library.runtime_controller import GeotaggedAsset
 
@@ -14,9 +18,11 @@ class _FakeQueryService:
         self.assets = list(assets)
         self.library_root = library_root
         self.read_calls: list[tuple[int, int | None]] = []
+        self.count_calls = 0
         self.row_lookup_calls: list[Path] = []
 
     def count_query_assets(self, query: AssetQuery):
+        self.count_calls += 1
         return len(self._matching_assets(query))
 
     def read_query_asset_rows(self, root: Path, query: AssetQuery):
@@ -28,6 +34,26 @@ class _FakeQueryService:
             self._row_for_asset(asset, root)
             for asset in matching[offset : offset + limit]
         ]
+
+    def read_query_asset_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ):
+        self.read_calls.append((first, limit))
+        matching = self._matching_assets(query)
+        rows = [
+            self._row_for_asset(asset, root)
+            for asset in matching[first : first + limit]
+        ]
+        return WindowResult(
+            first=first,
+            rows=rows,
+            total_count=len(matching),
+            collection_revision=42,
+        )
 
     def find_row_by_path(self, query: AssetQuery, path: Path):
         self.row_lookup_calls.append(path)
@@ -112,6 +138,61 @@ class _FailingOnceQueryService(_FakeQueryService):
             raise RuntimeError("transient deep window failure")
         return super().read_query_asset_rows(root, query)
 
+    def read_query_asset_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ):
+        if first >= self.fail_offset and not self.failed:
+            self.failed = True
+            raise RuntimeError("transient deep window failure")
+        return super().read_query_asset_window(root, query, first, limit)
+
+
+def _jpeg_bytes() -> bytes:
+    image = QImage(4, 4, QImage.Format.Format_RGB32)
+    image.fill(0xFF336699)
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "JPEG")
+    return bytes(data)
+
+
+def test_scan_row_to_dto_decodes_micro_thumbnail_bytes() -> None:
+    dto = scan_row_to_dto(
+        Path("/library"),
+        "photo.jpg",
+        {
+            "id": "asset",
+            "rel": "photo.jpg",
+            "media_type": 0,
+            "micro_thumbnail": _jpeg_bytes(),
+        },
+    )
+
+    assert dto is not None
+    assert isinstance(dto.micro_thumbnail, QImage)
+    assert not dto.micro_thumbnail.isNull()
+
+
+def test_scan_row_to_dto_ignores_invalid_micro_thumbnail_bytes() -> None:
+    dto = scan_row_to_dto(
+        Path("/library"),
+        "photo.jpg",
+        {
+            "id": "asset",
+            "rel": "photo.jpg",
+            "media_type": 0,
+            "micro_thumbnail": b"not-an-image",
+        },
+    )
+
+    assert dto is not None
+    assert dto.micro_thumbnail is None
+
 
 def test_load_initial_window_uses_sparse_cache() -> None:
     assets = [
@@ -132,6 +213,28 @@ def test_load_initial_window_uses_sparse_cache() -> None:
     assert store.count() == 600
     assert 0 < len(store._row_cache) <= store.MAX_WINDOW_SIZE
     assert min(store._row_cache) == 0
+
+
+def test_gallery_window_fetch_uses_window_api_without_extra_count() -> None:
+    assets = [
+        Asset(
+            id=str(i),
+            album_id="a",
+            path=Path(f"asset_{i}.jpg"),
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        )
+        for i in range(600)
+    ]
+    service = _FakeQueryService(assets)
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+
+    store.load_selection(Path("."), query=AssetQuery())
+
+    assert service.read_calls == [(0, 320)]
+    assert service.count_calls == 0
+    assert store.snapshot_signature()[2] >= 42
 
 
 def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
@@ -597,6 +700,7 @@ def test_mid_scroll_rescan_updates_gallery_after_single_scan_finished(tmp_path: 
     store.handle_scan_finished(root, True)
 
     assert store.count() == 241
-    top_dto = store.asset_at(0)
-    assert top_dto is not None
-    assert top_dto.rel_path == Path("new_asset.jpg")
+    visible_dto = store.asset_at(120)
+    assert visible_dto is not None
+    assert visible_dto.rel_path == Path("asset_119.jpg")
+    assert store.asset_at(0) is None

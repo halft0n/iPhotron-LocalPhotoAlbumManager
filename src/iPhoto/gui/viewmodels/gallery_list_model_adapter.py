@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, Slot
-
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QTimer, Slot
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.application.ports import EditServicePort
 from iPhoto.gui.ui.models.roles import Roles, role_names
@@ -35,6 +34,11 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._current_row = -1
         self._last_snapshot: Optional[tuple[int, Optional[tuple[int, int]], int]] = None
         self._duration_cache: dict[Path, float] = {}
+        self._pending_prioritize_range: tuple[int, int] | None = None
+        self._prioritize_timer = QTimer(self)
+        self._prioritize_timer.setSingleShot(True)
+        self._prioritize_timer.setInterval(16)
+        self._prioritize_timer.timeout.connect(self._flush_pending_prioritize_rows)
 
         self._store.window_changed.connect(self._on_window_changed)
         self._store.data_changed.connect(self._on_source_changed)
@@ -179,7 +183,26 @@ class GalleryListModelAdapter(QAbstractListModel):
         return self._store.row_for_path(path)
 
     def prioritize_rows(self, first: int, last: int) -> None:
-        self._store.prioritize_rows(first, last)
+        first = max(0, int(first))
+        last = max(first, int(last))
+        if self._pending_prioritize_range is None:
+            self._pending_prioritize_range = (first, last)
+        else:
+            pending_first, pending_last = self._pending_prioritize_range
+            self._pending_prioritize_range = (
+                min(pending_first, first),
+                max(pending_last, last),
+            )
+        if not self._prioritize_timer.isActive():
+            self._prioritize_timer.start()
+
+    @Slot()
+    def _flush_pending_prioritize_rows(self) -> None:
+        pending = self._pending_prioritize_range
+        self._pending_prioritize_range = None
+        if pending is None:
+            return
+        self._store.prioritize_rows(*pending)
 
     def pin_row(self, row: int) -> None:
         self._store.pin_row(row)

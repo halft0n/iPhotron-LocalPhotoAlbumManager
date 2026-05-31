@@ -39,7 +39,7 @@ class ScannerWorker(QRunnable):
     # Number of items to process before emitting a progressive update signal.
     # A smaller chunk size makes the UI feel more responsive during the initial
     # load, while a larger one reduces the overhead of signal emission.
-    SCAN_CHUNK_SIZE = 10
+    SCAN_CHUNK_SIZE = 500
 
     def __init__(
         self,

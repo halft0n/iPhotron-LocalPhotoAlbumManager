@@ -96,6 +96,39 @@ class AssetRepositoryPort(Protocol):
     ) -> WindowResult:
         """Return a bounded collection window."""
 
+    def create_scan_job(
+        self,
+        *,
+        job_id: str,
+        root: str,
+        scope: str,
+        status: str = "running",
+        stage: str = "discover",
+    ) -> None:
+        """Create scan job bookkeeping."""
+
+    def update_scan_job_stage(
+        self,
+        job_id: str,
+        *,
+        stage: str | None = None,
+        status: str | None = None,
+        found_count: int | None = None,
+        processed_count: int | None = None,
+        visible_count: int | None = None,
+        failed_count: int | None = None,
+        finished: bool = False,
+    ) -> None:
+        """Update scan job progress."""
+
+    def append_scan_event(
+        self,
+        job_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Append one scan event."""
+
     def find_row_by_path(self, query: CollectionQuery, path: Path) -> int | None:
         """Return a row index for *path* inside *query*."""
 

@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Optional, Protocol
 
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.domain.models.query import AssetQuery
+from iPhoto.domain.models.query import WindowResult
 from iPhoto.infrastructure.services.performance_events import emit_perf_event
 from iPhoto.gui.viewmodels.asset_dto_converter import (
     geotagged_asset_to_dto as _geotagged_asset_to_dto_fn,
@@ -52,6 +53,15 @@ class GalleryAssetQuerySurface(Protocol):
         query: AssetQuery,
     ) -> Iterable[dict]:
         """Yield rows matching *query*, scoped to *root*."""
+
+    def read_query_asset_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a bounded scoped window for *query*."""
 
     def find_row_by_path(self, query: AssetQuery, path: Path) -> Optional[int]:
         """Return a row index for *path* inside *query*."""
@@ -556,11 +566,8 @@ class GalleryCollectionStore:
         request_generation = self._request_generation + 1
         self._request_generation = request_generation
 
-        count_query = self._count_query(self._current_query)
-        if self._asset_query_service is None:
-            new_total = 0
-        else:
-            new_total = self._asset_query_service.count_query_assets(count_query)
+        fetch_result = self._fetch_window_for_visible_range(first, last)
+        new_total = fetch_result[0]
         if new_total <= 0:
             old_total = self._total_count
             self._reset_window_state()
@@ -571,8 +578,9 @@ class GalleryCollectionStore:
 
         first = max(0, min(first, new_total - 1))
         last = max(first, min(last, new_total - 1))
-        window_first, window_last = self._compute_target_window(first, last, new_total)
-        fetched_rows = self._fetch_rows(window_first, window_last)
+        _new_total, window_first, window_last, fetched_rows, collection_revision = fetch_result
+        if window_last < window_first:
+            window_first, window_last = self._compute_target_window(first, last, new_total)
         if request_generation != self._request_generation:
             return
 
@@ -595,7 +603,7 @@ class GalleryCollectionStore:
         self._pending_scan_refresh = False
         self._pending_scan_rels.clear()
         self._pending_scan_sort_keys.clear()
-        self._collection_revision += 1
+        self._collection_revision = max(self._collection_revision + 1, collection_revision)
 
         if emit_signals:
             if old_total != new_total:
@@ -606,6 +614,82 @@ class GalleryCollectionStore:
             self.window_changed.emit(window_first, window_last)
             if pinned_row is not None and pinned_row not in fetched_rows and pinned_row in self._row_cache:
                 self.window_changed.emit(pinned_row, pinned_row)
+
+    def _fetch_window_for_visible_range(
+        self,
+        first: int,
+        last: int,
+    ) -> tuple[int, int, int, Dict[int, AssetDTO], int]:
+        if self._current_query is None:
+            return 0, 0, -1, {}, self._collection_revision
+
+        active_root = self._active_root or self._library_root
+        if active_root is None or self._asset_query_service is None:
+            return 0, 0, -1, {}, self._collection_revision
+
+        read_window = getattr(self._asset_query_service, "read_query_asset_window", None)
+        if callable(read_window):
+            window_first, window_limit = self._compute_target_window_unbounded(first, last)
+            try:
+                window = read_window(
+                    active_root,
+                    self._current_query,
+                    window_first,
+                    window_limit,
+                )
+            except Exception as exc:
+                emit_perf_event(
+                    "gallery_window_fetch_failed",
+                    first=window_first,
+                    last=window_first + max(0, window_limit) - 1,
+                    error=type(exc).__name__,
+                )
+                return self._total_count, window_first, window_first + max(0, window_limit) - 1, {}, self._collection_revision
+            rows = self._rows_to_dtos(window.first, window.rows)
+            fetched_last = window.first + len(window.rows) - 1
+            if not rows and window.total_count > 0:
+                fetched_last = window.first + max(0, window_limit) - 1
+            return (
+                window.total_count,
+                window.first,
+                min(max(window.first, fetched_last), max(0, window.total_count - 1)),
+                rows,
+                window.collection_revision,
+            )
+
+        count_query = self._count_query(self._current_query)
+        new_total = self._asset_query_service.count_query_assets(count_query)
+        if new_total <= 0:
+            return 0, 0, -1, {}, self._collection_revision
+        bounded_first = max(0, min(first, new_total - 1))
+        bounded_last = max(bounded_first, min(last, new_total - 1))
+        window_first, window_last = self._compute_target_window(
+            bounded_first,
+            bounded_last,
+            new_total,
+        )
+        return (
+            new_total,
+            window_first,
+            window_last,
+            self._fetch_rows(window_first, window_last),
+            self._collection_revision + 1,
+        )
+
+    def _compute_target_window_unbounded(self, first: int, last: int) -> tuple[int, int]:
+        first = max(0, first)
+        last = max(first, last)
+        visible_count = max(1, last - first + 1)
+        target_size = min(
+            self.MAX_WINDOW_SIZE,
+            max(self.MIN_WINDOW_SIZE, visible_count * self.WINDOW_MULTIPLIER),
+        )
+        if visible_count >= target_size:
+            return first, target_size
+
+        lookbehind = visible_count * self.LOOKBEHIND_SCREENS
+        window_first = max(0, first - lookbehind)
+        return window_first, target_size
 
     def _compute_target_window(self, first: int, last: int, total_count: int) -> tuple[int, int]:
         visible_count = max(1, last - first + 1)
@@ -670,21 +754,12 @@ class GalleryCollectionStore:
         if active_root is None or self._asset_query_service is None:
             return {}
         try:
-            for offset, row in enumerate(
-                self._asset_query_service.read_query_asset_rows(active_root, query)
-            ):
-                row_index = first + offset
-                view_rel = row.get("rel") if isinstance(row, dict) else None
-                if not isinstance(view_rel, str) or not view_rel:
-                    continue
-                if self._scan_row_is_thumbnail(view_rel, row):
-                    continue
-                dto = self._scan_row_to_dto(active_root, view_rel, row)
-                if dto is None:
-                    continue
-                if validate_paths and not self._path_exists_cached(dto.abs_path):
-                    continue
-                rows[row_index] = dto
+            rows = self._rows_to_dtos(
+                first,
+                self._asset_query_service.read_query_asset_rows(active_root, query),
+                active_root=active_root,
+                validate_paths=validate_paths,
+            )
         except Exception as exc:
             emit_perf_event(
                 "gallery_window_fetch_failed",
@@ -693,6 +768,38 @@ class GalleryCollectionStore:
                 error=type(exc).__name__,
             )
             return {}
+        return rows
+
+    def _rows_to_dtos(
+        self,
+        first: int,
+        raw_rows: Iterable[dict],
+        *,
+        active_root: Path | None = None,
+        validate_paths: bool | None = None,
+    ) -> Dict[int, AssetDTO]:
+        rows: Dict[int, AssetDTO] = {}
+        root = active_root or self._active_root or self._library_root
+        if root is None:
+            return rows
+        if validate_paths is None:
+            validate_paths = (
+                self._current_query is not None
+                and self._should_validate_paths(self._current_query)
+            )
+        for offset, row in enumerate(raw_rows):
+            row_index = first + offset
+            view_rel = row.get("rel") if isinstance(row, dict) else None
+            if not isinstance(view_rel, str) or not view_rel:
+                continue
+            if self._scan_row_is_thumbnail(view_rel, row):
+                continue
+            dto = self._scan_row_to_dto(root, view_rel, row)
+            if dto is None:
+                continue
+            if validate_paths and not self._path_exists_cached(dto.abs_path):
+                continue
+            rows[row_index] = dto
         return rows
 
     def _fetch_single_row(self, row: int) -> Optional[AssetDTO]:

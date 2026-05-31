@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ...infrastructure.services.performance_events import emit_perf_event, monotonic_ms
 from ..ports import AssetRepositoryPort, MediaScannerPort
 
 LOGGER = logging.getLogger(__name__)
@@ -24,9 +24,11 @@ class ScanLibraryRequest:
     is_cancelled: Callable[[], bool] | None = None
     row_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None
+    visible_chunk_callback: Callable[[list[dict[str, Any]]], None] | None = None
     batch_failed_callback: Callable[[int], None] | None = None
     chunk_size: int = 500
     persist_chunks: bool = True
+    scan_job_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,29 +99,58 @@ class ScanLibraryUseCase:
         chunk: list[dict[str, Any]],
         request: ScanLibraryRequest,
     ) -> int:
-        started = monotonic_ms()
+        started = _monotonic_ms()
         try:
             emitted_chunk = self._asset_repository.merge_scan_rows(chunk)
         except Exception:
             LOGGER.exception("Failed to persist scan chunk of %s items", len(chunk))
-            emit_perf_event(
-                "scan_batch_failed",
-                rows=len(chunk),
-                elapsed_ms=round(monotonic_ms() - started, 3),
+            LOGGER.debug(
+                "scan_batch_failed rows=%s elapsed_ms=%s",
+                len(chunk),
+                round(_monotonic_ms() - started, 3),
             )
             if request.batch_failed_callback is not None:
                 request.batch_failed_callback(len(chunk))
             return len(chunk)
 
-        emit_perf_event(
-            "scan_batch_committed",
-            rows=len(emitted_chunk),
-            requested_rows=len(chunk),
-            elapsed_ms=round(monotonic_ms() - started, 3),
+        LOGGER.debug(
+            "scan_batch_committed rows=%s requested_rows=%s elapsed_ms=%s",
+            len(emitted_chunk),
+            len(chunk),
+            round(_monotonic_ms() - started, 3),
         )
+        ready_chunk = _ready_visible_rows(emitted_chunk)
+        append_scan_event = getattr(self._asset_repository, "append_scan_event", None)
+        if request.scan_job_id and callable(append_scan_event):
+            append_scan_event(
+                request.scan_job_id,
+                "batch_committed",
+                {
+                    "requested_rows": len(chunk),
+                    "rows": len(emitted_chunk),
+                    "ready_rows": len(ready_chunk),
+                },
+            )
         if request.chunk_callback is not None:
             request.chunk_callback(emitted_chunk)
+        if request.visible_chunk_callback is not None and ready_chunk:
+            request.visible_chunk_callback(ready_chunk)
         return 0
+
+
+def _monotonic_ms() -> float:
+    return time.perf_counter() * 1000
+
+
+def _ready_visible_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ready: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("thumbnail_state") != "ready":
+            continue
+        if row.get("micro_thumbnail") is None and not str(row.get("thumb_cache_key") or "").strip():
+            continue
+        ready.append(row)
+    return ready
 
 
 __all__ = ["ScanLibraryRequest", "ScanLibraryResult", "ScanLibraryUseCase"]

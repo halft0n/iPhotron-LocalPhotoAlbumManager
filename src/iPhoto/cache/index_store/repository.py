@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
@@ -93,6 +94,10 @@ def _sanitize_metadata_for_json(metadata: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(sanitized, dict):
         return sanitized
     return {}
+
+
+def _utc_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def get_global_repository(library_root: Path) -> "AssetRepository":
@@ -765,6 +770,90 @@ class AssetRepository:
         finally:
             if should_close:
                 conn.close()
+
+    def create_scan_job(
+        self,
+        *,
+        job_id: str,
+        root: str,
+        scope: str,
+        status: str = "running",
+        stage: str = "discover",
+    ) -> None:
+        """Create or replace scan job bookkeeping for an active scan."""
+
+        now = _utc_ms()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO scan_jobs (
+                    job_id, root, scope, status, stage, found_count,
+                    processed_count, visible_count, failed_count,
+                    started_at, updated_at, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, NULL)
+                """,
+                [job_id, root, scope, status, stage, now, now],
+            )
+
+    def update_scan_job_stage(
+        self,
+        job_id: str,
+        *,
+        stage: str | None = None,
+        status: str | None = None,
+        found_count: int | None = None,
+        processed_count: int | None = None,
+        visible_count: int | None = None,
+        failed_count: int | None = None,
+        finished: bool = False,
+    ) -> None:
+        """Update scan job progress without requiring callers to know SQL."""
+
+        assignments = ["updated_at = ?"]
+        params: list[Any] = [_utc_ms()]
+        for column, value in (
+            ("stage", stage),
+            ("status", status),
+            ("found_count", found_count),
+            ("processed_count", processed_count),
+            ("visible_count", visible_count),
+            ("failed_count", failed_count),
+        ):
+            if value is not None:
+                assignments.append(f"{column} = ?")
+                params.append(value)
+        if finished:
+            assignments.append("finished_at = ?")
+            params.append(_utc_ms())
+        params.append(job_id)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE scan_jobs SET {', '.join(assignments)} WHERE job_id = ?",
+                params,
+            )
+
+    def append_scan_event(
+        self,
+        job_id: str,
+        event_type: str,
+        payload: Dict[str, Any] | None = None,
+    ) -> None:
+        """Append a compact scan event payload."""
+
+        payload_json = json.dumps(
+            _sanitize_metadata_for_json(payload or {}),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO scan_events (job_id, event_type, payload_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [job_id, event_type, payload_json, _utc_ms()],
+            )
 
     def read_collection_page(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ from ..index_sync_service import (
     update_index_snapshot,
 )
 from ..infrastructure.services.filesystem_media_scanner import FilesystemMediaScanner
+from ..domain.models.scan import ScanStage
 from ..io.scanner_adapter import process_media_paths
 from ..media_classifier import ALL_IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from ..path_normalizer import compute_album_path
@@ -102,7 +104,7 @@ def merge_scan_chunk_with_repository(
             root=root,
             include=include,
             exclude=exclude,
-            chunk_callback=chunk_callback,
+            visible_chunk_callback=chunk_callback,
             batch_failed_callback=batch_failed_callback,
         ),
     )
@@ -206,31 +208,80 @@ class LibraryScanService:
             exclude=exclude,
         )
         repository = self._repository()
+        scan_job_id = f"scan_{uuid.uuid4().hex}"
+        create_scan_job = getattr(repository, "create_scan_job", None)
+        update_scan_job_stage = getattr(repository, "update_scan_job_stage", None)
+        append_scan_event = getattr(repository, "append_scan_event", None)
+        scan_scope = "album" if self._album_path(scan_root) else "library"
+        if callable(create_scan_job):
+            create_scan_job(
+                job_id=scan_job_id,
+                root=scan_root.as_posix(),
+                scope=scan_scope,
+                status="running",
+                stage=ScanStage.DISCOVER.value,
+            )
+        if callable(append_scan_event):
+            append_scan_event(
+                scan_job_id,
+                "stage_changed",
+                {"stage": ScanStage.DISCOVER.value},
+            )
         existing_index = load_incremental_index_cache(
             scan_root,
             library_root=self.library_root,
             repository=repository,
         )
+        if callable(update_scan_job_stage):
+            update_scan_job_stage(scan_job_id, stage=ScanStage.STAT_CACHE.value)
 
         use_case = ScanLibraryUseCase(
             scanner=self._scanner,
             asset_repository=repository,
         )
-        return use_case.execute(
-            ScanLibraryRequest(
-                root=scan_root,
-                include=resolved_include,
-                exclude=resolved_exclude,
-                existing_index=existing_index,
-                progress_callback=progress_callback,
-                is_cancelled=is_cancelled,
-                row_transform=self._library_relative_transform(scan_root),
-                chunk_callback=chunk_callback,
-                batch_failed_callback=batch_failed_callback,
-                chunk_size=chunk_size,
-                persist_chunks=persist_chunks,
+        try:
+            if callable(update_scan_job_stage):
+                update_scan_job_stage(scan_job_id, stage=ScanStage.METADATA.value)
+            result = use_case.execute(
+                ScanLibraryRequest(
+                    root=scan_root,
+                    include=resolved_include,
+                    exclude=resolved_exclude,
+                    existing_index=existing_index,
+                    progress_callback=progress_callback,
+                    is_cancelled=is_cancelled,
+                    row_transform=self._library_relative_transform(scan_root),
+                    visible_chunk_callback=chunk_callback,
+                    batch_failed_callback=batch_failed_callback,
+                    chunk_size=chunk_size,
+                    persist_chunks=persist_chunks,
+                    scan_job_id=scan_job_id,
+                )
             )
-        )
+        except Exception:
+            if callable(update_scan_job_stage):
+                update_scan_job_stage(
+                    scan_job_id,
+                    status="failed",
+                    finished=True,
+                )
+            raise
+
+        if callable(update_scan_job_stage):
+            update_scan_job_stage(
+                scan_job_id,
+                stage=ScanStage.VISIBLE_PUBLISH.value,
+                status=(
+                    "cancelled"
+                    if is_cancelled is not None and is_cancelled()
+                    else "completed"
+                ),
+                processed_count=len(result.rows),
+                visible_count=sum(1 for row in result.rows if _row_is_ready_visible(row)),
+                failed_count=result.failed_count,
+                finished=True,
+            )
+        return result
 
     def rescan_album(
         self,
@@ -629,6 +680,13 @@ class LibraryScanService:
 
 def _is_recoverable_index_error(exc: Exception) -> bool:
     return isinstance(exc, (sqlite3.Error, IndexCorruptedError, ManifestInvalidError))
+
+
+def _row_is_ready_visible(row: dict[str, Any]) -> bool:
+    return row.get("thumbnail_state") == "ready" and (
+        row.get("micro_thumbnail") is not None
+        or bool(str(row.get("thumb_cache_key") or "").strip())
+    )
 
 
 __all__ = [
