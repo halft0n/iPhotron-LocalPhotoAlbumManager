@@ -15,6 +15,27 @@ from iPhoto.gui.viewmodels.gallery_list_model_adapter import GalleryListModelAda
 from iPhoto.infrastructure.services.thumbnail_cache_service import ThumbnailCacheService
 
 
+class _Signal:
+    def __init__(self) -> None:
+        self.handlers = []
+
+    def connect(self, handler) -> None:
+        if handler not in self.handlers:
+            self.handlers.append(handler)
+
+    def disconnect(self, handler) -> None:
+        self.handlers.remove(handler)
+
+    def emit(self, *args) -> None:
+        for handler in list(self.handlers):
+            handler(*args)
+
+
+class _BackfillService:
+    def __init__(self) -> None:
+        self.thumbnail_backfill_completed = _Signal()
+
+
 @pytest.fixture
 def mock_store():
     store = MagicMock(spec=GalleryCollectionStore)
@@ -106,6 +127,56 @@ def test_prioritize_rows_coalesces_fast_scroll_requests(adapter, mock_store):
     adapter._flush_pending_prioritize_rows()
 
     mock_store.prioritize_rows.assert_called_once_with(5, 60)
+
+
+def test_scan_batches_are_coalesced_before_store_flush(adapter, mock_store):
+    mock_store.record_scan_batch.return_value = True
+
+    adapter.handle_scan_batch(SimpleNamespace(rows=[{"rel": "a.jpg"}]))
+    adapter.handle_scan_batch(SimpleNamespace(rows=[{"rel": "b.jpg"}]))
+    adapter._flush_pending_scan_batches()
+
+    assert adapter._scan_batch_timer.interval() == 150
+    assert mock_store.record_scan_batch.call_count == 2
+    mock_store.flush_pending_scan_refresh.assert_called_once_with()
+
+
+def test_backfill_completion_event_queues_scan_batch(mock_thumb_service):
+    service = _BackfillService()
+    store = MagicMock(spec=GalleryCollectionStore)
+    store.data_changed = MagicMock()
+    store.window_changed = MagicMock()
+    store.row_changed = MagicMock()
+    store.count.return_value = 0
+    store.asset_query_service = service
+    store.record_scan_batch.return_value = True
+    adapter = GalleryListModelAdapter(store, mock_thumb_service)
+    batch = SimpleNamespace(rows=[{"rel": "ready.jpg"}])
+
+    service.thumbnail_backfill_completed.emit(batch)
+    adapter._flush_pending_scan_batches()
+
+    store.record_scan_batch.assert_called_once_with(batch)
+    store.flush_pending_scan_refresh.assert_called_once_with()
+
+
+def test_rebind_asset_query_service_moves_backfill_completion_signal(
+    mock_store,
+    mock_thumb_service,
+):
+    old_service = _BackfillService()
+    new_service = _BackfillService()
+    mock_store.asset_query_service = old_service
+    adapter = GalleryListModelAdapter(mock_store, mock_thumb_service)
+
+    adapter.rebind_asset_query_service(new_service, Path("/library"))
+
+    assert adapter.handle_scan_batch not in old_service.thumbnail_backfill_completed.handlers
+    assert adapter.handle_scan_batch in new_service.thumbnail_backfill_completed.handlers
+    mock_store.rebind_asset_query_service.assert_called_once_with(
+        new_service,
+        Path("/library"),
+    )
 
 
 def test_decoration_role_uses_full_size_thumbnail_even_with_micro_fallback(

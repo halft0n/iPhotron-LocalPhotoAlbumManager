@@ -8,6 +8,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Set
 
+from ...config import RECENTLY_DELETED_DIR_NAME
 from ...utils.logging import get_logger
 
 logger = get_logger()
@@ -210,8 +211,47 @@ class SchemaMigrator:
                 WHEN gps IS NOT NULL AND TRIM(CAST(gps AS TEXT)) != '' THEN 1
                 ELSE 0
             END
-            WHERE has_gps IS NULL OR has_gps NOT IN (0, 1)
+            WHERE has_gps IS NULL
+                OR has_gps NOT IN (0, 1)
+                OR has_gps != CASE
+                    WHEN gps IS NOT NULL AND TRIM(CAST(gps AS TEXT)) != '' THEN 1
+                    ELSE 0
+                END
             """
+        )
+        conn.execute(
+            """
+            UPDATE assets
+            SET is_deleted = CASE
+                WHEN parent_album_path = ?
+                    OR parent_album_path LIKE ? ESCAPE '\\'
+                    OR rel = ?
+                    OR rel LIKE ? ESCAPE '\\'
+                    THEN 1
+                ELSE 0
+            END
+            WHERE is_deleted IS NULL
+                OR is_deleted NOT IN (0, 1)
+                OR (
+                    is_deleted = 0
+                    AND (
+                        parent_album_path = ?
+                        OR parent_album_path LIKE ? ESCAPE '\\'
+                        OR rel = ?
+                        OR rel LIKE ? ESCAPE '\\'
+                    )
+                )
+            """,
+            [
+                RECENTLY_DELETED_DIR_NAME,
+                f"{RECENTLY_DELETED_DIR_NAME}/%",
+                RECENTLY_DELETED_DIR_NAME,
+                f"{RECENTLY_DELETED_DIR_NAME}/%",
+                RECENTLY_DELETED_DIR_NAME,
+                f"{RECENTLY_DELETED_DIR_NAME}/%",
+                RECENTLY_DELETED_DIR_NAME,
+                f"{RECENTLY_DELETED_DIR_NAME}/%",
+            ],
         )
         conn.execute(
             """

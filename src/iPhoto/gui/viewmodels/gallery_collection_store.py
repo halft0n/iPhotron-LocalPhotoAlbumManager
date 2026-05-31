@@ -141,6 +141,10 @@ class GalleryCollectionStore:
         self.set_asset_query_service(asset_query_service)
         self.set_library_root(library_root)
 
+    @property
+    def asset_query_service(self) -> GalleryAssetQuerySurface | None:
+        return self._asset_query_service
+
     def set_active_root(self, root: Optional[Path]) -> None:
         self._active_root = root
 
@@ -493,11 +497,23 @@ class GalleryCollectionStore:
         self.ensure_row_loaded(row, emit_signals=True)
 
     def handle_scan_chunk(self, scan_root: Path, chunk: List[dict]) -> None:
-        if not chunk or self._current_query is None or self._active_root is None:
+        if not self.record_scan_chunk(scan_root, chunk):
             return
+        if self._visible_range is None:
+            return
+
+        visible_first, visible_last = self._visible_range
+        if visible_first == 0 or self._pending_scan_affects_visible_window(visible_first, visible_last):
+            self.flush_pending_scan_refresh()
+
+    def record_scan_chunk(self, scan_root: Path, chunk: List[dict]) -> bool:
+        """Record ready scan rows and defer the visible-window refresh."""
+
+        if not chunk or self._current_query is None or self._active_root is None:
+            return False
         mapped_entries = self._map_scan_rows_to_active_entries(scan_root, chunk)
         if not mapped_entries:
-            return
+            return False
 
         self._pending_scan_rels.update(view_rel for view_rel, _row in mapped_entries)
         self._pending_scan_sort_keys.update(
@@ -507,16 +523,16 @@ class GalleryCollectionStore:
             if sort_key is not None
         )
         self._pending_scan_refresh = True
-
-        if self._visible_range is None:
-            return
-
-        visible_first, visible_last = self._visible_range
-        if visible_first == 0 or self._pending_scan_affects_visible_window(visible_first, visible_last):
-            self._flush_pending_scan_refresh()
+        return True
 
     def handle_scan_batch(self, batch: object) -> None:
         """Consume an explicit ready-only scan batch without depending on legacy chunks."""
+
+        if self.record_scan_batch(batch):
+            self.flush_pending_scan_refresh()
+
+    def record_scan_batch(self, batch: object) -> bool:
+        """Record a ready-only scan batch and defer any GUI refresh."""
 
         rows = getattr(batch, "rows", None)
         root = getattr(batch, "root", None)
@@ -524,8 +540,8 @@ class GalleryCollectionStore:
         if isinstance(revision, int):
             self._collection_revision = max(self._collection_revision, revision)
         if root is None or not rows:
-            return
-        self.handle_scan_chunk(Path(root), list(rows))
+            return False
+        return self.record_scan_chunk(Path(root), list(rows))
 
     def handle_scan_finished(self, root: Path, success: bool) -> None:
         if not success or self._current_query is None or self._active_root is None:
@@ -542,7 +558,9 @@ class GalleryCollectionStore:
                 emit_source_changed=True,
             )
 
-    def _flush_pending_scan_refresh(self) -> None:
+    def flush_pending_scan_refresh(self) -> None:
+        """Refresh the visible window after recorded scan/backfill rows."""
+
         if not self._pending_scan_refresh or self._current_query is None:
             self._pending_scan_refresh = False
             self._pending_scan_rels.clear()

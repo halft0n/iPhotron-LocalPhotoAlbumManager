@@ -321,6 +321,52 @@ def test_gallery_requests_visible_window_stale_backfill_once() -> None:
     assert store.snapshot_signature()[2] >= 42
 
 
+def test_scan_batch_can_be_recorded_without_immediate_refresh(tmp_path: Path) -> None:
+    asset = Asset(
+        id="existing",
+        album_id="a",
+        path=Path("existing.jpg"),
+        media_type=MediaType.IMAGE,
+        size_bytes=1,
+        created_at=datetime(2024, 1, 1),
+    )
+    service = _FakeQueryService([asset], library_root=tmp_path)
+    store = GalleryCollectionStore(service, library_root=tmp_path)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(tmp_path, query=AssetQuery())
+    calls = []
+    original_reload = store._reload_window_for_visible_range
+
+    def _recording_reload(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_reload(*args, **kwargs)
+
+    store._reload_window_for_visible_range = _recording_reload  # type: ignore[method-assign]
+    batch = SimpleNamespace(
+        root=tmp_path,
+        collection_revision=100,
+        rows=[
+            {
+                "rel": "new.jpg",
+                "id": "new",
+                "dt": "2024-01-02T00:00:00",
+                "media_type": 0,
+                "bytes": 1,
+                "thumbnail_state": "ready",
+                "micro_thumbnail": b"micro",
+            }
+        ],
+    )
+
+    assert store.record_scan_batch(batch) is True
+    assert calls == []
+
+    store.flush_pending_scan_refresh()
+
+    assert len(calls) == 1
+    assert store.snapshot_signature()[2] >= 100
+
+
 def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
     assets = [
         Asset(

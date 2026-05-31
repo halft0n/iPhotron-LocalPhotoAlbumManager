@@ -261,6 +261,80 @@ Known constraints:
 
 ---
 
+# Scan/Scroll Event Coalescing Log
+
+Date: 2026-05-31
+Branch: `codex/large-library-performance`
+Status: completed
+
+## Scope
+
+This follow-up implements the next scan/scroll performance slice from
+`30-large-library-performance-scan-scroll-handoff.md`:
+
+- explicit Qt-timer coalescing for `ScanBatchCommitted` GUI refreshes
+- event-driven stale thumbnail backfill completion instead of polling
+- ready-thumbnail collection query-plan regression coverage
+
+The existing deletion of `docs/requirements/INITIAL_SCAN_LARGE_LIBRARY_STABILITY.md`
+must remain preserved.
+
+## Completed Changes
+
+- Routed GUI `scanBatchCommitted` signals through `GalleryListModelAdapter`,
+  where a 150ms Qt timer coalesces rapid scan/backfill batches before refreshing
+  the visible window.
+- Split `GalleryCollectionStore` scan handling into record and flush steps so
+  legacy direct calls still refresh immediately while adapter-driven batches can
+  coalesce.
+- Added `LibraryAssetQueryService.thumbnail_backfill_completed`, a lightweight
+  callback signal that publishes `ScanBatchCommitted` after stale thumbnail
+  backfill succeeds.
+- Removed active reliance on the 500ms Gallery backfill polling timer; retained
+  compatibility no-op methods for old tests/fakes.
+- Tightened ready collection WHERE clauses to use indexed fields directly and
+  added query-plan regression coverage for ready-thumbnail collections.
+- Marked rows under `Recently Deleted` as `is_deleted=1` during row mapping so
+  ordinary collection queries can use the visible indexes without path-prefix
+  filtering.
+
+## Verification
+
+Commands run:
+
+```bash
+.venv/bin/pytest tests/application/test_library_asset_query_service.py tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/performance/test_refactor_performance_baseline.py
+.venv/bin/pytest tests/cache/test_index_store_features.py tests/test_scanner_adapter.py tests/application/test_library_scan_service.py tests/test_asset_grid_scroll.py tests/test_thumbnail_cache_service.py tests/library/test_scanner_worker.py tests/gui/coordinators/test_main_coordinator_asset_runtime_boundary.py
+```
+
+Result:
+
+- 58 passed for the focused scan/scroll/performance command.
+- 67 passed for the wider cache/scan/gallery/coordinator command.
+- Existing warning remains: pytest unknown config option `env`.
+
+## Handoff
+
+Current behavior to preserve:
+
+- `ScanBatchCommitted` remains ready-only and is now the preferred Gallery
+  refresh transport.
+- Legacy `scanChunkReady` is still connected for location/gallery compatibility.
+- Backfill remains scoped to visible-window stale recovery; no startup full
+  library backfill was added.
+- Ready collection queries now rely on `is_deleted`, `thumbnail_state`, and
+  thumbnail payload fields being normalized by migrations/row mapping.
+
+Next recommended work:
+
+- Add more GUI consumers to `scanBatchCommitted`, then evaluate deprecating
+  legacy `scanChunkReady`.
+- Add opt-in 100k/1M synthetic scroll and scan visible-publish benchmarks.
+- Continue expanding scan job stage timings for discover, metadata, thumbnail,
+  commit, publish, and derived jobs.
+
+---
+
 # Scan/Scroll Follow-up Log
 
 Date: 2026-05-31

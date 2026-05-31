@@ -10,6 +10,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from ...config import RECENTLY_DELETED_DIR_NAME
+
 
 def insert_rows(
     conn: sqlite3.Connection,
@@ -63,6 +65,13 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
         rel_path = Path(rel)
         parent = rel_path.parent
         parent_album_path = parent.as_posix() if parent != Path(".") else ""
+    is_deleted = row.get("is_deleted")
+    if is_deleted is None:
+        rel_str = str(rel or "")
+        is_deleted = 1 if (
+            parent_album_path == RECENTLY_DELETED_DIR_NAME
+            or rel_str.startswith(f"{RECENTLY_DELETED_DIR_NAME}/")
+        ) else 0
 
     return [
         rel,
@@ -99,7 +108,7 @@ def row_to_db_params(row: Dict[str, Any]) -> List[Any]:
         row.get("month"),
         row.get("media_type"),
         row.get("is_favorite", 0),
-        row.get("is_deleted", 0),
+        is_deleted,
         has_gps,
         thumbnail_state,
         row.get("location"),

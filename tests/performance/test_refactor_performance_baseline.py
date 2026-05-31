@@ -10,6 +10,8 @@ import pytest
 
 from iPhoto.bootstrap.library_scan_service import LibraryScanService
 from iPhoto.cache.index_store import get_global_repository, reset_global_repository
+from iPhoto.cache.index_store.queries import QueryBuilder
+from iPhoto.domain.models.query import CollectionQuery, CollectionType
 from iPhoto.infrastructure.services.cache_stats import CacheStatsCollector
 from iPhoto.infrastructure.services.disk_thumbnail_cache import DiskThumbnailCache
 from iPhoto.infrastructure.services.thumbnail_cache import MemoryThumbnailCache
@@ -92,8 +94,32 @@ def _asset_row(index: int) -> dict[str, Any]:
     }
 
 
+def _ready_collection_row(index: int) -> dict[str, Any]:
+    row = _asset_row(index)
+    row.update(
+        {
+            "is_deleted": 0,
+            "is_favorite": 1 if index % 3 == 0 else 0,
+            "has_gps": 1 if index % 2 == 0 else 0,
+            "media_type": 1 if index % 4 == 0 else 0,
+            "thumbnail_state": "ready",
+            "thumb_cache_key": f"thumb-{index:05d}",
+        }
+    )
+    return row
+
+
 def _assert_under_baseline(elapsed: float, limit: float, label: str) -> None:
     assert elapsed < limit, f"{label} took {elapsed:.3f}s; baseline limit is {limit:.3f}s"
+
+
+def _collection_query_plan(repository: Any, query: CollectionQuery) -> str:
+    sql, params = QueryBuilder.build_collection_query(query, limit=100)
+    conn = repository._db_manager.get_connection()
+    return " | ".join(
+        " ".join(str(part) for part in row)
+        for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    )
 
 
 def test_scan_merge_performance_baseline(tmp_path: Path) -> None:
@@ -171,3 +197,25 @@ def test_thumbnail_cache_hit_performance_baseline(tmp_path: Path) -> None:
     assert stats.get("L2").hits == 1
     assert stats.get("L1").hits == THUMBNAIL_CACHE_HITS
     _assert_under_baseline(elapsed, MAX_THUMBNAIL_CACHE_SECONDS, "thumbnail cache baseline")
+
+
+def test_ready_thumbnail_collection_queries_use_visible_indexes(tmp_path: Path) -> None:
+    repository = get_global_repository(tmp_path)
+    repository.write_rows(_ready_collection_row(index) for index in range(250))
+
+    queries = [
+        CollectionQuery(collection_type=CollectionType.ALL_PHOTOS),
+        CollectionQuery(collection_type=CollectionType.ALBUM, album_path="Album"),
+        CollectionQuery(collection_type=CollectionType.FAVORITES),
+        CollectionQuery(collection_type=CollectionType.VIDEOS),
+        CollectionQuery(collection_type=CollectionType.MAP, has_gps=True),
+    ]
+
+    for query in queries:
+        sql, params = QueryBuilder.build_collection_query(query, limit=100)
+        plan = _collection_query_plan(repository, query)
+
+        assert "thumbnail_state = ?" in sql
+        assert params[params.index("ready")] == "ready"
+        assert "USING INDEX idx_assets_visible" in plan or "USING INDEX idx_assets_gps" in plan
+        assert "USE TEMP B-TREE" not in plan

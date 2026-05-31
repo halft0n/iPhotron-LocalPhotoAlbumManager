@@ -5,7 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QTimer, Slot
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal as QtSignal,
+    Slot,
+)
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.application.ports import EditServicePort
 from iPhoto.gui.ui.models.roles import Roles, role_names
@@ -18,6 +27,8 @@ from .gallery_collection_store import GalleryCollectionStore
 
 class GalleryListModelAdapter(QAbstractListModel):
     """Expose a pure Python collection store to Qt item views."""
+
+    _scan_batch_received = QtSignal(object)
 
     def __init__(
         self,
@@ -35,20 +46,26 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._last_snapshot: Optional[tuple[int, Optional[tuple[int, int]], int]] = None
         self._duration_cache: dict[Path, float] = {}
         self._pending_prioritize_range: tuple[int, int] | None = None
+        self._pending_scan_batch_count = 0
+        self._backfill_completion_source: Any | None = None
         self._prioritize_timer = QTimer(self)
         self._prioritize_timer.setSingleShot(True)
         self._prioritize_timer.setInterval(16)
         self._prioritize_timer.timeout.connect(self._flush_pending_prioritize_rows)
-        self._backfill_refresh_timer = QTimer(self)
-        self._backfill_refresh_timer.setSingleShot(True)
-        self._backfill_refresh_timer.setInterval(500)
-        self._backfill_refresh_timer.timeout.connect(self._flush_pending_thumbnail_backfill)
+        self._scan_batch_timer = QTimer(self)
+        self._scan_batch_timer.setSingleShot(True)
+        self._scan_batch_timer.setInterval(150)
+        self._scan_batch_timer.timeout.connect(self._flush_pending_scan_batches)
+        self._scan_batch_received.connect(
+            self._enqueue_scan_batch_on_ui_thread,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         self._store.window_changed.connect(self._on_window_changed)
         self._store.data_changed.connect(self._on_source_changed)
         self._store.row_changed.connect(self._on_row_changed)
-        self._store.thumbnail_backfill_scheduled.connect(self._schedule_thumbnail_backfill_refresh)
         self._thumbnails.thumbnailReady.connect(self._on_thumbnail_ready)
+        self._bind_backfill_completion_signal(self._current_asset_query_service())
 
     @classmethod
     def create(
@@ -213,14 +230,45 @@ class GalleryListModelAdapter(QAbstractListModel):
             return
         self._store.prioritize_rows(*pending)
 
+    @Slot(object)
+    def handle_scan_batch(self, batch: object) -> None:
+        """Queue ready scan/backfill batches onto the adapter's Qt thread."""
+
+        if QThread.currentThread() is self.thread():
+            self._enqueue_scan_batch_on_ui_thread(batch)
+        else:
+            self._scan_batch_received.emit(batch)
+
+    @Slot(object)
+    def _enqueue_scan_batch_on_ui_thread(self, batch: object) -> None:
+        record_batch = getattr(self._store, "record_scan_batch", None)
+        if callable(record_batch):
+            if record_batch(batch):
+                self._pending_scan_batch_count += 1
+                if not self._scan_batch_timer.isActive():
+                    self._scan_batch_timer.start()
+            return
+
+        handle_batch = getattr(self._store, "handle_scan_batch", None)
+        if callable(handle_batch):
+            handle_batch(batch)
+
+    @Slot()
+    def _flush_pending_scan_batches(self) -> None:
+        if self._pending_scan_batch_count <= 0:
+            return
+        self._pending_scan_batch_count = 0
+        flush = getattr(self._store, "flush_pending_scan_refresh", None)
+        if callable(flush):
+            flush()
+        else:
+            self._on_source_changed()
+
     def _schedule_thumbnail_backfill_refresh(self) -> None:
-        if not self._backfill_refresh_timer.isActive():
-            self._backfill_refresh_timer.start()
+        """Compatibility no-op for old tests/fakes that emit this signal."""
 
     def _flush_pending_thumbnail_backfill(self) -> None:
-        still_pending = self._store.flush_pending_thumbnail_backfill()
-        if still_pending:
-            self._backfill_refresh_timer.start()
+        """Compatibility no-op after backfill completion became event-driven."""
 
     def pin_row(self, row: int) -> None:
         self._store.pin_row(row)
@@ -233,6 +281,7 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._last_snapshot = None
         self._duration_cache.clear()
         self._store.rebind_asset_query_service(asset_query_service, library_root)
+        self._bind_backfill_completion_signal(asset_query_service)
 
     def invalidate_thumbnail(self, path_str: str) -> None:
         path = Path(path_str)
@@ -382,6 +431,31 @@ class GalleryListModelAdapter(QAbstractListModel):
                 idx,
                 [Roles.FEATURED, Roles.INFO, Roles.LOCATION, Roles.SIZE],
             )
+
+    def _current_asset_query_service(self) -> Any | None:
+        return getattr(self._store, "asset_query_service", None)
+
+    def _bind_backfill_completion_signal(self, asset_query_service: Any | None) -> None:
+        if asset_query_service is self._backfill_completion_source:
+            return
+
+        old_signal = getattr(
+            self._backfill_completion_source,
+            "thumbnail_backfill_completed",
+            None,
+        )
+        old_disconnect = getattr(old_signal, "disconnect", None)
+        if callable(old_disconnect):
+            try:
+                old_disconnect(self.handle_scan_batch)
+            except (RuntimeError, TypeError, ValueError):
+                pass
+
+        self._backfill_completion_source = asset_query_service
+        new_signal = getattr(asset_query_service, "thumbnail_backfill_completed", None)
+        new_connect = getattr(new_signal, "connect", None)
+        if callable(new_connect):
+            new_connect(self.handle_scan_batch)
 
     def _snapshot_hash(self, count: int) -> bytes:
         del count

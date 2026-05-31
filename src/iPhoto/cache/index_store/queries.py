@@ -287,27 +287,20 @@ class QueryBuilder:
     def build_collection_where(
         collection_query: CollectionQuery,
     ) -> Tuple[List[str], List[Any]]:
-        where_clauses: List[str] = [
-            "live_role = 0",
-            "COALESCE(is_deleted, 0) = 0",
-        ]
+        album_path = collection_query.album_path
+        is_trash_collection = album_path == RECENTLY_DELETED_DIR_NAME
+        where_clauses: List[str] = ["live_role = 0"]
+        if not is_trash_collection:
+            where_clauses.append("is_deleted = 0")
         params: List[Any] = []
 
         if collection_query.min_thumbnail_state:
-            where_clauses.append("COALESCE(thumbnail_state, 'ready') = ?")
+            where_clauses.append("thumbnail_state = ?")
             params.append(collection_query.min_thumbnail_state)
             if collection_query.min_thumbnail_state == "ready":
                 where_clauses.append(
                     "(micro_thumbnail IS NOT NULL OR TRIM(COALESCE(thumb_cache_key, '')) != '')"
                 )
-
-        album_path = collection_query.album_path
-        if album_path != RECENTLY_DELETED_DIR_NAME:
-            escaped_trash = escape_like_pattern(RECENTLY_DELETED_DIR_NAME)
-            where_clauses.append(
-                f"(parent_album_path IS NULL OR (parent_album_path != ? AND parent_album_path NOT LIKE ? {ESCAPE_CLAUSE}))"
-            )
-            params.extend([RECENTLY_DELETED_DIR_NAME, f"{escaped_trash}/%"])
 
         if collection_query.collection_type == CollectionType.ALBUM or album_path:
             album_where, album_params = QueryBuilder.build_album_filter(
@@ -333,13 +326,9 @@ class QueryBuilder:
 
         if collection_query.has_gps is not None:
             if collection_query.has_gps:
-                where_clauses.append(
-                    "(COALESCE(has_gps, 0) = 1 OR (gps IS NOT NULL AND TRIM(CAST(gps AS TEXT)) != ''))"
-                )
+                where_clauses.append("has_gps = 1")
             else:
-                where_clauses.append(
-                    "(COALESCE(has_gps, 0) = 0 AND (gps IS NULL OR TRIM(CAST(gps AS TEXT)) = ''))"
-                )
+                where_clauses.append("has_gps = 0")
 
         if collection_query.date_from is not None:
             where_clauses.append("sort_ts >= ?")

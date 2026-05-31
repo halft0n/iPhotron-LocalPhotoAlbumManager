@@ -25,8 +25,33 @@ from ..domain.models.query import (
     SortOrder,
     WindowResult,
 )
+from ..domain.models.scan import ScanBatchCommitted
 from ..io.scanner_adapter import ensure_scan_thumbnail
 from ..path_normalizer import compute_album_path
+
+
+class _CallbackSignal:
+    """Small thread-safe callback signal for non-Qt application services."""
+
+    def __init__(self) -> None:
+        self._handlers: list[Callable[..., None]] = []
+        self._lock = threading.Lock()
+
+    def connect(self, handler: Callable[..., None]) -> None:
+        with self._lock:
+            if handler not in self._handlers:
+                self._handlers.append(handler)
+
+    def disconnect(self, handler: Callable[..., None]) -> None:
+        with self._lock:
+            if handler in self._handlers:
+                self._handlers.remove(handler)
+
+    def emit(self, *args: Any, **kwargs: Any) -> None:
+        with self._lock:
+            handlers = list(self._handlers)
+        for handler in handlers:
+            handler(*args, **kwargs)
 
 
 class _ScopedLocationCacheWriter:
@@ -63,6 +88,7 @@ class LibraryAssetQueryService:
         self._thumbnail_backfill_lock = threading.Lock()
         self._thumbnail_backfill_pending: set[tuple[str, int, int, str]] = set()
         self._thumbnail_backfill_shutdown = False
+        self.thumbnail_backfill_completed = _CallbackSignal()
 
     def count_assets(
         self,
@@ -370,6 +396,7 @@ class LibraryAssetQueryService:
                 self._thumbnail_backfill_pending.discard(request_key)
             return
         try:
+            ready_rows: list[dict[str, Any]] = []
             for row in candidates:
                 view_rel = row.get("rel")
                 if not isinstance(view_rel, str) or not view_rel:
@@ -385,6 +412,28 @@ class LibraryAssetQueryService:
                     micro_thumbnail=thumbnail.micro_thumbnail,
                     thumb_cache_key=thumbnail.thumb_cache_key,
                 )
+                ready_row = dict(row)
+                ready_row["thumbnail_state"] = "ready"
+                ready_row["micro_thumbnail"] = thumbnail.micro_thumbnail
+                ready_row["thumb_cache_key"] = thumbnail.thumb_cache_key
+                ready_row["thumb_error"] = None
+                ready_rows.append(ready_row)
+            if ready_rows:
+                batch = ScanBatchCommitted(
+                    job_id=(
+                        "thumbnail-backfill:"
+                        f"{request_key[0]}:{request_key[1]}:{request_key[2]}"
+                    ),
+                    root=root,
+                    collection_revision=0,
+                    ready_count=len(ready_rows),
+                    rows=ready_rows,
+                    stage_elapsed_ms={},
+                )
+                with self._thumbnail_backfill_lock:
+                    should_emit = not self._thumbnail_backfill_shutdown
+                if should_emit:
+                    self.thumbnail_backfill_completed.emit(batch)
         finally:
             with self._thumbnail_backfill_lock:
                 self._thumbnail_backfill_pending.discard(request_key)
