@@ -936,3 +936,15 @@ def test_rescan_current_emits_message_without_open_library() -> None:
 
     assert messages == [("No album is currently open.", 3000)]
     facade.scan_root_async.assert_not_called()
+
+
+def test_rescan_current_uses_async_scan_for_open_album(tmp_path: Path) -> None:
+    album_root = tmp_path / "Album"
+    album_root.mkdir()
+    vm, _store, _context, facade, _asset_service = _make_vm(library_root=tmp_path)
+    facade.current_album = SimpleNamespace(root=album_root)
+
+    vm.rescan_current()
+
+    facade.rescan_current_async.assert_called_once_with()
+    facade.scan_root_async.assert_not_called()

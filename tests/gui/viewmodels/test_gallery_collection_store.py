@@ -824,6 +824,144 @@ def test_handle_scan_batch_refreshes_empty_initial_window(tmp_path: Path) -> Non
     assert store.asset_at(0) is not None
 
 
+def test_scan_batch_library_relative_rel_does_not_double_prefix_in_library_view(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Library"
+    album_root = root / "Album"
+    album_root.mkdir(parents=True)
+    query_service = _FakeQueryService([], library_root=root)
+    store = GalleryCollectionStore(query_service, library_root=root)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(root, query=AssetQuery())
+
+    batch = SimpleNamespace(
+        root=album_root,
+        collection_revision=2,
+        rows=[
+            {
+                "rel": "Album/a.jpg",
+                "id": "scan-new",
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-new",
+            }
+        ],
+    )
+
+    assert store.record_scan_batch(batch) is True
+    assert store._pending_scan_rels == {"Album/a.jpg"}
+
+    query_service.assets.append(
+        Asset(
+            id="scan-new",
+            album_id="a",
+            path=Path("Album/a.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+            created_at=datetime(2024, 1, 1, 12, 0, 0),
+        )
+    )
+    store.flush_pending_scan_refresh()
+
+    dto = store.asset_at(0)
+    assert store.count() == 1
+    assert dto is not None
+    assert dto.rel_path == Path("Album/a.jpg")
+
+
+def test_scan_batch_album_relative_rel_maps_to_library_view_rel(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Library"
+    album_root = root / "Album"
+    album_root.mkdir(parents=True)
+    query_service = _FakeQueryService([], library_root=root)
+    store = GalleryCollectionStore(query_service, library_root=root)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(root, query=AssetQuery())
+
+    batch = SimpleNamespace(
+        root=album_root,
+        collection_revision=2,
+        rows=[
+            {
+                "rel": "a.jpg",
+                "id": "scan-new",
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-new",
+            }
+        ],
+    )
+
+    assert store.record_scan_batch(batch) is True
+    assert store._pending_scan_rels == {"Album/a.jpg"}
+
+    query_service.assets.append(
+        Asset(
+            id="scan-new",
+            album_id="a",
+            path=Path("Album/a.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+            created_at=datetime(2024, 1, 1, 12, 0, 0),
+        )
+    )
+    store.flush_pending_scan_refresh()
+
+    dto = store.asset_at(0)
+    assert store.count() == 1
+    assert dto is not None
+    assert dto.rel_path == Path("Album/a.jpg")
+
+
+def test_scan_batch_library_relative_rel_maps_to_album_view_rel(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Library"
+    album_root = root / "Album"
+    album_root.mkdir(parents=True)
+    query_service = _FakeQueryService([], library_root=root)
+    store = GalleryCollectionStore(query_service, library_root=root)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(album_root, query=AssetQuery(album_path="Album"))
+
+    batch = SimpleNamespace(
+        root=album_root,
+        collection_revision=2,
+        rows=[
+            {
+                "rel": "Album/a.jpg",
+                "id": "scan-new",
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-new",
+            }
+        ],
+    )
+
+    assert store.record_scan_batch(batch) is True
+    assert store._pending_scan_rels == {"a.jpg"}
+
+    query_service.assets.append(
+        Asset(
+            id="scan-new",
+            album_id="a",
+            path=Path("Album/a.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+            created_at=datetime(2024, 1, 1, 12, 0, 0),
+        )
+    )
+    store.flush_pending_scan_refresh()
+
+    dto = store.asset_at(0)
+    assert store.count() == 1
+    assert dto is not None
+    assert dto.rel_path == Path("a.jpg")
+
+
 def test_handle_scan_finished_refreshes_count_outside_top_visible_window(tmp_path: Path) -> None:
     root = tmp_path / "Library"
     root.mkdir()

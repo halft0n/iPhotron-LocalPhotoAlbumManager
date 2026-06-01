@@ -151,6 +151,8 @@ def test_scanner_worker_uses_injected_scan_service(temp_album, qapp):
     assert root == temp_album
     assert kwargs["include"] == ["*.jpg"]
     assert kwargs["persist_chunks"] is True
+    assert kwargs["chunk_size"] == 100
+    assert kwargs["max_chunk_interval_ms"] == 250
     assert callable(kwargs["scan_batch_callback"])
     assert batch_spy.count() == 1
     assert finished_spy.count() == 1

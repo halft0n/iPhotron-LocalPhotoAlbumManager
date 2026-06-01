@@ -31,10 +31,9 @@ class ScannerWorker(QRunnable):
     When scanning a subfolder, the assets are stored with their library-relative paths.
     """
 
-    # Number of items to process before emitting a progressive update signal.
-    # A smaller chunk size makes the UI feel more responsive during the initial
-    # load, while a larger one reduces the overhead of signal emission.
-    SCAN_CHUNK_SIZE = 500
+    # GUI scans trade smaller commits for timely DB-backed gallery refreshes.
+    SCAN_CHUNK_SIZE = 100
+    SCAN_CHUNK_MAX_INTERVAL_MS = 250
 
     def __init__(
         self,
@@ -128,6 +127,7 @@ class ScannerWorker(QRunnable):
                     count,
                 ),
                 chunk_size=self.SCAN_CHUNK_SIZE,
+                max_chunk_interval_ms=self.SCAN_CHUNK_MAX_INTERVAL_MS,
                 persist_chunks=True,
             )
             rows = result.rows

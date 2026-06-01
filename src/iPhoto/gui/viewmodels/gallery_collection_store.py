@@ -70,6 +70,14 @@ class GalleryAssetQuerySurface(Protocol):
         """Return a live partner row for *asset_id*."""
 
 
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 class GalleryCollectionStore:
     """Pure Python gallery data store with viewport-aware caching."""
 
@@ -930,8 +938,6 @@ class GalleryCollectionStore:
                 raw_rel,
                 scan_root_resolved,
                 view_root_resolved,
-                is_scan_parent=is_scan_parent,
-                is_scan_child=is_scan_child,
             )
             if view_rel:
                 mapped.append((view_rel, row))
@@ -1012,26 +1018,39 @@ class GalleryCollectionStore:
         raw_rel: str,
         scan_root: Path,
         view_root: Path,
-        *,
-        is_scan_parent: bool,
-        is_scan_child: bool,
     ) -> Optional[str]:
-        if scan_root == view_root:
-            return raw_rel
-        if is_scan_parent:
-            full_path = scan_root / raw_rel
+        for candidate in self._scan_row_abs_path_candidates(raw_rel, scan_root):
             try:
-                return full_path.relative_to(view_root).as_posix()
-            except (OSError, ValueError):
-                return None
-        if is_scan_child:
-            try:
-                prefix = scan_root.relative_to(view_root).as_posix()
+                return candidate.relative_to(view_root).as_posix()
             except ValueError:
-                return None
-            prefix_slash = f"{prefix}/" if prefix else ""
-            return f"{prefix_slash}{raw_rel}" if prefix_slash else raw_rel
+                continue
         return None
+
+    def _scan_row_abs_path_candidates(
+        self,
+        raw_rel: str,
+        scan_root: Path,
+    ) -> list[Path]:
+        candidates: list[Path] = []
+        if self._library_root is not None:
+            library_candidate = self._library_root.resolve() / raw_rel
+            scan_candidate = scan_root / raw_rel
+            if _path_is_relative_to(library_candidate, scan_root):
+                candidates.extend([library_candidate, scan_candidate])
+            else:
+                candidates.extend([scan_candidate, library_candidate])
+        else:
+            candidates.append(scan_root / raw_rel)
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = os.path.normcase(str(candidate))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(candidate)
+        return unique
 
     def _geotagged_asset_to_dto(self, asset: object, library_root: Path) -> Optional[AssetDTO]:
         return _geotagged_asset_to_dto_fn(asset, library_root)

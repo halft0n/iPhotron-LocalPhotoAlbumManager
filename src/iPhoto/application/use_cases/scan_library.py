@@ -28,6 +28,7 @@ class ScanLibraryRequest:
     batch_failed_callback: Callable[[int], None] | None = None
     chunk_size: int = 500
     visible_publish_size: int = 100
+    max_chunk_interval_ms: float | None = None
     persist_chunks: bool = True
     scan_job_id: str | None = None
     scan_stage_elapsed_ms: dict[str, float] | None = None
@@ -58,6 +59,7 @@ class ScanLibraryUseCase:
         failed_count = 0
         chunk_size = max(1, int(request.chunk_size))
         scan_started = _monotonic_ms()
+        last_chunk_flush = scan_started
 
         for scanned_row in self._scanner.scan(
             request.root,
@@ -76,13 +78,21 @@ class ScanLibraryUseCase:
             rows.append(row)
             if request.persist_chunks:
                 chunk.append(row)
-                if len(chunk) >= chunk_size:
+                now = _monotonic_ms()
+                if _should_flush_chunk(
+                    chunk,
+                    chunk_size=chunk_size,
+                    max_interval_ms=request.max_chunk_interval_ms,
+                    last_flush_ms=last_chunk_flush,
+                    now_ms=now,
+                ):
                     failed_count += self._merge_chunk(
                         chunk,
                         request,
-                        metadata_elapsed_ms=round(_monotonic_ms() - scan_started, 3),
+                        metadata_elapsed_ms=round(now - scan_started, 3),
                     )
                     chunk = []
+                    last_chunk_flush = _monotonic_ms()
 
         if (
             request.persist_chunks
@@ -171,6 +181,27 @@ class ScanLibraryUseCase:
 
 def _monotonic_ms() -> float:
     return time.perf_counter() * 1000
+
+
+def _should_flush_chunk(
+    chunk: list[dict[str, Any]],
+    *,
+    chunk_size: int,
+    max_interval_ms: float | None,
+    last_flush_ms: float,
+    now_ms: float,
+) -> bool:
+    if not chunk:
+        return False
+    if len(chunk) >= chunk_size:
+        return True
+    if max_interval_ms is None:
+        return False
+    try:
+        interval = float(max_interval_ms)
+    except (TypeError, ValueError):
+        return False
+    return interval >= 0 and now_ms - last_flush_ms >= interval
 
 
 def _ready_visible_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

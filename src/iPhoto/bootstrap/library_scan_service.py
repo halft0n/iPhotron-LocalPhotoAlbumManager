@@ -160,6 +160,7 @@ class LibraryScanService:
         batch_failed_callback: Callable[[int], None] | None = None,
         chunk_size: int = 500,
         visible_publish_size: int = 100,
+        max_chunk_interval_ms: float | None = None,
         persist_chunks: bool = False,
     ) -> ScanLibraryResult:
         """Scan *root* using the shared application use case."""
@@ -245,6 +246,7 @@ class LibraryScanService:
                     batch_failed_callback=batch_failed_callback,
                     chunk_size=chunk_size,
                     visible_publish_size=visible_publish_size,
+                    max_chunk_interval_ms=max_chunk_interval_ms,
                     persist_chunks=persist_chunks,
                     scan_job_id=scan_job_id,
                     scan_stage_elapsed_ms=stage_elapsed_ms,
