@@ -31,6 +31,7 @@ class StatusBarController(QObject):
         self._progress_bar = progress_bar
         self._rescan_action = rescan_action
         self._progress_context: Optional[str] = None
+        self._scan_active: bool = False
         # ``_move_context_delete`` keeps track of whether the current move feedback refers
         # to a deletion into Recently Deleted so we can surface "Delete" specific copy.
         self._move_context_delete: bool = False
@@ -51,6 +52,7 @@ class StatusBarController(QObject):
     def begin_scan(self) -> None:
         """Prepare the UI for a long-running scan operation."""
 
+        self._scan_active = True
         self._progress_context = "scan"
         self._status_bar.setVisible(True)
         self._progress_bar.setRange(0, 0)
@@ -72,6 +74,8 @@ class StatusBarController(QObject):
             # A scan triggered from outside the controller started without
             # calling :meth:`begin_scan`; bootstrap the UI lazily.
             self.begin_scan()
+        else:
+            self._scan_active = True
 
         if total < 0:
             self._progress_bar.setRange(0, 0)
@@ -92,6 +96,7 @@ class StatusBarController(QObject):
         # emits strongly typed signals.  The argument is intentionally unused
         # because the status bar only cares about the outcome of the scan.
 
+        self._scan_active = False
         if self._progress_context == "scan":
             self._progress_bar.setVisible(False)
             self._progress_bar.setRange(0, 0)
@@ -134,6 +139,8 @@ class StatusBarController(QObject):
     def handle_load_started(self, root: Path) -> None:
         """Show an indeterminate progress indicator while assets load."""
 
+        if self._scan_active:
+            return
         self._progress_context = "load"
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setValue(0)
@@ -143,6 +150,8 @@ class StatusBarController(QObject):
     def handle_load_progress(self, root: Path, current: int, total: int) -> None:
         """Update the progress bar while assets stream into the model."""
 
+        if self._scan_active:
+            return
         if self._progress_context != "load":
             return
         if total <= 0:
@@ -156,6 +165,8 @@ class StatusBarController(QObject):
     def handle_load_finished(self, root: Path, success: bool) -> None:
         """Hide the progress bar once loading wraps up."""
 
+        if self._scan_active:
+            return
         if self._progress_context != "load":
             return
         self._progress_bar.setVisible(False)
