@@ -59,6 +59,19 @@ class _ResettablePathModel(QAbstractListModel):
         self.paths = list(paths)
         self.endResetModel()
 
+    def reorder_with_data_changed(self, paths: list[Path]) -> None:
+        self.paths = list(paths)
+        if self.paths:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self.paths) - 1, 0),
+                [],
+            )
+
+
+def _selected_rows(grid: GalleryGridView) -> list[int]:
+    return sorted(index.row() for index in grid.selectionModel().selectedIndexes())
+
 
 def test_selection_controller_restores_selection_across_model_reset(qapp: QApplication) -> None:
     first = Path("/library/a.jpg")
@@ -86,5 +99,101 @@ def test_selection_controller_restores_selection_across_model_reset(qapp: QAppli
     model.replace_paths([second, first])
     qapp.processEvents()
 
-    selected_rows = sorted(index.row() for index in grid.selectionModel().selectedIndexes())
-    assert selected_rows == [0]
+    assert _selected_rows(grid) == [0]
+
+
+def test_selection_controller_keeps_new_selection_between_scan_resets(qapp: QApplication) -> None:
+    first = Path("/library/a.jpg")
+    second = Path("/library/b.jpg")
+    third = Path("/library/c.jpg")
+    model = _ResettablePathModel([first, second, third])
+    grid = GalleryGridView()
+    grid.setModel(model)
+    grid.show()
+    qapp.processEvents()
+
+    controller = SelectionController(
+        selection_button=QPushButton(),
+        grid_view=grid,
+        grid_delegate=None,
+        preview_controller=MagicMock(),
+        handle_grid_clicks=False,
+    )
+    controller.set_selection_mode(True)
+    grid.selectionModel().select(
+        model.index(1, 0),
+        QItemSelectionModel.SelectionFlag.Select
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    model.replace_paths([third, second, first])
+    qapp.processEvents()
+    grid.selectionModel().select(
+        model.index(0, 0),
+        QItemSelectionModel.SelectionFlag.Select
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    model.replace_paths([second, first, third])
+    qapp.processEvents()
+
+    assert _selected_rows(grid) == [0, 2]
+
+
+def test_selection_controller_rebinds_when_grid_model_changes(qapp: QApplication) -> None:
+    first = Path("/library/a.jpg")
+    second = Path("/library/b.jpg")
+    old_model = _ResettablePathModel([first, second])
+    new_model = _ResettablePathModel([second, first])
+    grid = GalleryGridView()
+    grid.setModel(old_model)
+    grid.show()
+    qapp.processEvents()
+
+    controller = SelectionController(
+        selection_button=QPushButton(),
+        grid_view=grid,
+        grid_delegate=None,
+        preview_controller=MagicMock(),
+        handle_grid_clicks=False,
+    )
+    controller.set_selection_mode(True)
+    grid.selectionModel().select(
+        old_model.index(1, 0),
+        QItemSelectionModel.SelectionFlag.Select
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    grid.setModel(new_model)
+    qapp.processEvents()
+
+    assert _selected_rows(grid) == [0]
+
+
+def test_selection_controller_restores_selection_after_data_refresh(qapp: QApplication) -> None:
+    first = Path("/library/a.jpg")
+    second = Path("/library/b.jpg")
+    model = _ResettablePathModel([first, second])
+    grid = GalleryGridView()
+    grid.setModel(model)
+    grid.show()
+    qapp.processEvents()
+
+    controller = SelectionController(
+        selection_button=QPushButton(),
+        grid_view=grid,
+        grid_delegate=None,
+        preview_controller=MagicMock(),
+        handle_grid_clicks=False,
+    )
+    controller.set_selection_mode(True)
+    grid.selectionModel().select(
+        model.index(1, 0),
+        QItemSelectionModel.SelectionFlag.Select
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    model.reorder_with_data_changed([second, first])
+    qapp.processEvents()
+
+    assert _selected_rows(grid) == [0]

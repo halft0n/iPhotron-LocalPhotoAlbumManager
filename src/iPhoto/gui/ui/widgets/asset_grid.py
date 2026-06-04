@@ -27,6 +27,8 @@ class AssetGrid(QListView):
     previewReleased = Signal()
     previewCancelled = Signal()
     visibleRowsChanged = Signal(int, int)
+    modelAboutToChange = Signal(object)
+    modelChanged = Signal(object)
 
     _DRAG_CANCEL_THRESHOLD = 6
 
@@ -240,6 +242,8 @@ class AssetGrid(QListView):
         self._drop_handler(paths)
 
     def setModel(self, model) -> None:  # type: ignore[override]
+        previous_model = self._model
+        self.modelAboutToChange.emit(previous_model)
         if self._model is not None:
             try:
                 self._model.modelReset.disconnect(self._schedule_visible_rows_update)
@@ -260,6 +264,7 @@ class AssetGrid(QListView):
             model.rowsInserted.connect(self._schedule_visible_rows_update)
             model.rowsRemoved.connect(self._schedule_visible_rows_update)
         self._schedule_visible_rows_update()
+        self.modelChanged.emit(model)
 
     # ------------------------------------------------------------------
     # Helpers

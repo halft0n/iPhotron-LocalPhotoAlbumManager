@@ -8,10 +8,16 @@ import pytest
 pytest.importorskip("PySide6", reason="PySide6 is required for context menu tests", exc_type=ImportError)
 
 from iPhoto.gui.ui.controllers.context_menu_controller import ContextMenuController
+from iPhoto.gui.ui.models.roles import Roles
 from iPhoto.gui.services.restoration_service import RestoreBatch, RestoreScheduleResult
 
 
-def _make_controller(*, selected_paths: list[Path], prepare_cb=None):
+def _make_controller(
+    *,
+    selected_paths: list[Path],
+    prepare_cb=None,
+    mock_optimistic: bool = True,
+):
     grid_view = MagicMock()
     selection_model = MagicMock()
     selected_index = MagicMock()
@@ -36,7 +42,8 @@ def _make_controller(*, selected_paths: list[Path], prepare_cb=None):
         export_callback=MagicMock(),
         prepare_paths_for_mutation=prepare_cb,
     )
-    controller._apply_optimistic_move = MagicMock(return_value=True)  # type: ignore[method-assign]
+    if mock_optimistic:
+        controller._apply_optimistic_move = MagicMock(return_value=True)  # type: ignore[method-assign]
     return controller, facade
 
 
@@ -165,3 +172,99 @@ def test_execute_restore_waits_for_backend_acceptance() -> None:
     assert events == ["restore"]
     controller._apply_optimistic_move.assert_not_called()
     controller._toast.show_toast.assert_not_called()
+
+
+def test_delete_selection_uses_current_grid_model_for_optimistic_move() -> None:
+    asset_path = Path("D:/library/Album/photo.jpg")
+    trash_root = Path("D:/library/.Recently Deleted")
+    controller, facade = _make_controller(
+        selected_paths=[],
+        mock_optimistic=False,
+    )
+    current_model = MagicMock()
+    current_model.optimistic_move_paths.return_value = True
+    stale_model = controller._asset_model
+    stale_model.optimistic_move_paths.return_value = False
+    controller._grid_view.model.return_value = current_model
+    selected_index = (
+        controller._grid_view.selectionModel.return_value.selectedIndexes.return_value[0]
+    )
+    selected_index.data.side_effect = (
+        lambda role=None: str(asset_path) if role == Roles.ABS else None
+    )
+    facade.delete_assets.return_value = True
+    facade.library_manager.deleted_directory.return_value = trash_root
+
+    assert controller.delete_selection() is True
+
+    facade.delete_assets.assert_called_once_with([asset_path])
+    current_model.optimistic_move_paths.assert_called_once_with(
+        [asset_path],
+        trash_root,
+        is_delete=True,
+    )
+    stale_model.optimistic_move_paths.assert_not_called()
+
+
+def test_move_selection_uses_current_grid_model_for_optimistic_move() -> None:
+    asset_path = Path("D:/library/Album/photo.jpg")
+    destination = Path("D:/library/Target")
+    controller, facade = _make_controller(
+        selected_paths=[],
+        mock_optimistic=False,
+    )
+    current_model = MagicMock()
+    current_model.optimistic_move_paths.return_value = True
+    stale_model = controller._asset_model
+    stale_model.optimistic_move_paths.return_value = False
+    controller._grid_view.model.return_value = current_model
+    selected_index = (
+        controller._grid_view.selectionModel.return_value.selectedIndexes.return_value[0]
+    )
+    selected_index.data.side_effect = (
+        lambda role=None: str(asset_path) if role == Roles.ABS else None
+    )
+    facade.move_assets.return_value = True
+
+    controller._execute_move_to_album(destination)
+
+    facade.move_assets.assert_called_once_with([asset_path], destination)
+    current_model.optimistic_move_paths.assert_called_once_with(
+        [asset_path],
+        destination,
+        is_delete=False,
+    )
+    stale_model.optimistic_move_paths.assert_not_called()
+
+
+def test_restore_selection_uses_current_grid_model_for_optimistic_move() -> None:
+    asset_path = Path("D:/library/.Recently Deleted/photo.jpg")
+    destination = Path("D:/library/Album")
+    controller, facade = _make_controller(
+        selected_paths=[],
+        mock_optimistic=False,
+    )
+    current_model = MagicMock()
+    current_model.optimistic_move_paths.return_value = True
+    stale_model = controller._asset_model
+    stale_model.optimistic_move_paths.return_value = False
+    controller._grid_view.model.return_value = current_model
+    selected_index = (
+        controller._grid_view.selectionModel.return_value.selectedIndexes.return_value[0]
+    )
+    selected_index.data.side_effect = (
+        lambda role=None: str(asset_path) if role == Roles.ABS else None
+    )
+    facade.restore_assets_with_plan.return_value = RestoreScheduleResult(
+        batches=[RestoreBatch(sources=[asset_path], destination_root=destination)]
+    )
+
+    controller._execute_restore()
+
+    facade.restore_assets_with_plan.assert_called_once_with([asset_path])
+    current_model.optimistic_move_paths.assert_called_once_with(
+        [asset_path],
+        destination,
+        is_delete=False,
+    )
+    stale_model.optimistic_move_paths.assert_not_called()

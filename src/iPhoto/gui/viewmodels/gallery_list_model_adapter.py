@@ -45,6 +45,8 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._thumb_size = QSize(512, 512)
         self._current_row = -1
         self._last_snapshot: Optional[tuple[int, Optional[tuple[int, int]], int]] = None
+        self._last_selection_signature: tuple[str, str, str] | None = None
+        self._last_window_identity_signature: tuple[str, ...] | None = None
         self._duration_cache: dict[Path, float] = {}
         self._pending_prioritize_range: tuple[int, int] | None = None
         self._pending_scan_batch_count = 0
@@ -283,6 +285,8 @@ class GalleryListModelAdapter(QAbstractListModel):
         library_root: Optional[Path],
     ) -> None:
         self._last_snapshot = None
+        self._last_selection_signature = None
+        self._last_window_identity_signature = None
         self._duration_cache.clear()
         self._store.rebind_asset_query_service(asset_query_service, library_root)
         self._bind_backfill_completion_signal(asset_query_service)
@@ -405,9 +409,31 @@ class GalleryListModelAdapter(QAbstractListModel):
     def _on_source_changed(self) -> None:
         count = self._store.count()
         current_snapshot = self._store.snapshot_signature()
-        if self._last_snapshot == current_snapshot:
+        current_selection_signature = self._selection_signature()
+        current_window_identity = self._window_identity_signature(current_snapshot[1])
+        if (
+            self._last_snapshot == current_snapshot
+            and self._last_selection_signature == current_selection_signature
+            and self._last_window_identity_signature == current_window_identity
+        ):
             return
         self._duration_cache.clear()
+        old_snapshot = self._last_snapshot
+        old_selection_signature = self._last_selection_signature
+        old_window_identity = self._last_window_identity_signature
+        self._last_snapshot = current_snapshot
+        self._last_selection_signature = current_selection_signature
+        self._last_window_identity_signature = current_window_identity
+        if (
+            old_snapshot is not None
+            and old_selection_signature == current_selection_signature
+            and old_window_identity == current_window_identity
+            and old_snapshot[0] == count
+        ):
+            self._emit_data_refresh(old_snapshot[1], current_snapshot[1])
+            if self._current_row >= count:
+                self._current_row = -1
+            return
         emit_perf_event(
             "gallery_model_reset",
             rows=count,
@@ -416,9 +442,80 @@ class GalleryListModelAdapter(QAbstractListModel):
         )
         self.beginResetModel()
         self.endResetModel()
-        self._last_snapshot = current_snapshot
         if self._current_row >= count:
             self._current_row = -1
+
+    def _emit_data_refresh(
+        self,
+        previous_window: Optional[tuple[int, int]],
+        current_window: Optional[tuple[int, int]],
+    ) -> None:
+        count = self.rowCount()
+        if count <= 0:
+            return
+        windows = [
+            window
+            for window in (previous_window, current_window)
+            if window is not None
+        ]
+        if windows:
+            first = min(window[0] for window in windows)
+            last = max(window[1] for window in windows)
+        else:
+            first = 0
+            last = count - 1
+        first = max(0, min(first, count - 1))
+        last = max(first, min(last, count - 1))
+        emit_perf_event(
+            "gallery_model_data_refresh",
+            rows=count,
+            first=first,
+            last=last,
+        )
+        top = self.index(first, 0)
+        bottom = self.index(last, 0)
+        if top.isValid() and bottom.isValid():
+            self.dataChanged.emit(top, bottom, [])
+
+    def _window_identity_signature(
+        self,
+        window: Optional[tuple[int, int]],
+    ) -> tuple[str, ...] | None:
+        count = self.rowCount()
+        if count <= 0:
+            return ()
+        if window is None:
+            return None
+        first = max(0, min(window[0], count - 1))
+        last = max(first, min(window[1], count - 1))
+        identity: list[str] = []
+        for row in range(first, last + 1):
+            asset = self._store.asset_at(row)
+            if asset is None:
+                return None
+            key = (
+                getattr(asset, "id", None)
+                or getattr(asset, "abs_path", None)
+                or getattr(asset, "rel_path", None)
+            )
+            if key is None:
+                return None
+            identity.append(str(key))
+        return tuple(identity)
+
+    def _selection_signature(self) -> tuple[str, str, str]:
+        active_root = getattr(self._store, "active_root", lambda: None)()
+        current_query = getattr(self._store, "current_query", lambda: None)()
+        current_direct = getattr(self._store, "current_direct_assets", lambda: None)()
+        direct_key = ""
+        if current_direct is not None:
+            direct_key = repr(
+                [
+                    str(getattr(asset, "abs_path", None) or getattr(asset, "path", ""))
+                    for asset in current_direct
+                ]
+            )
+        return (str(active_root), repr(current_query), direct_key)
 
     def _on_window_changed(self, first: int, last: int) -> None:
         count = self.rowCount()

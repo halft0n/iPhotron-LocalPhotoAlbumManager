@@ -323,3 +323,107 @@ def test_row_changed_emits_targeted_favorite_update(adapter, mock_store):
     adapter._on_row_changed(0)
 
     assert Roles.FEATURED in emitted_roles
+
+
+def test_source_change_same_selection_and_count_emits_data_changed_not_model_reset(
+    adapter,
+    mock_store,
+):
+    assets = [
+        _make_dto(id="a", abs_path=Path("/library/a.jpg")),
+        _make_dto(id="b", abs_path=Path("/library/b.jpg")),
+    ]
+    mock_store.count.return_value = 2
+    mock_store.active_root.return_value = Path("/library")
+    mock_store.current_query.return_value = "all"
+    mock_store.current_direct_assets.return_value = None
+    mock_store.asset_at.side_effect = lambda row: assets[row]
+    mock_store.snapshot_signature.return_value = (2, (0, 1), 1)
+    reset_count = 0
+    changed_ranges: list[tuple[int, int]] = []
+
+    def _record_reset() -> None:
+        nonlocal reset_count
+        reset_count += 1
+
+    adapter.modelReset.connect(_record_reset)
+    adapter.dataChanged.connect(
+        lambda top, bottom, _roles: changed_ranges.append((top.row(), bottom.row()))
+    )
+
+    adapter._on_source_changed()
+    mock_store.snapshot_signature.return_value = (2, (0, 1), 2)
+    adapter._on_source_changed()
+
+    assert reset_count == 1
+    assert changed_ranges == [(0, 1)]
+
+
+def test_source_change_same_count_with_reordered_rows_resets_model(
+    adapter,
+    mock_store,
+):
+    first_assets = [
+        _make_dto(id="a", abs_path=Path("/library/a.jpg")),
+        _make_dto(id="b", abs_path=Path("/library/b.jpg")),
+    ]
+    reordered_assets = [first_assets[1], first_assets[0]]
+    visible_assets = first_assets
+    mock_store.count.return_value = 2
+    mock_store.active_root.return_value = Path("/library")
+    mock_store.current_query.return_value = "all"
+    mock_store.current_direct_assets.return_value = None
+    mock_store.asset_at.side_effect = lambda row: visible_assets[row]
+    mock_store.snapshot_signature.return_value = (2, (0, 1), 1)
+    reset_count = 0
+    changed_ranges: list[tuple[int, int]] = []
+
+    def _record_reset() -> None:
+        nonlocal reset_count
+        reset_count += 1
+
+    adapter.modelReset.connect(_record_reset)
+    adapter.dataChanged.connect(
+        lambda top, bottom, _roles: changed_ranges.append((top.row(), bottom.row()))
+    )
+
+    adapter._on_source_changed()
+    visible_assets = reordered_assets
+    mock_store.snapshot_signature.return_value = (2, (0, 1), 2)
+    adapter._on_source_changed()
+
+    assert reset_count == 2
+    assert changed_ranges == []
+
+
+def test_source_change_count_change_still_resets_model(adapter, mock_store):
+    assets = [
+        _make_dto(id="a", abs_path=Path("/library/a.jpg")),
+        _make_dto(id="b", abs_path=Path("/library/b.jpg")),
+        _make_dto(id="c", abs_path=Path("/library/c.jpg")),
+    ]
+    mock_store.count.return_value = 2
+    mock_store.active_root.return_value = Path("/library")
+    mock_store.current_query.return_value = "all"
+    mock_store.current_direct_assets.return_value = None
+    mock_store.asset_at.side_effect = lambda row: assets[row]
+    mock_store.snapshot_signature.return_value = (2, (0, 1), 1)
+    reset_count = 0
+    changed_ranges: list[tuple[int, int]] = []
+
+    def _record_reset() -> None:
+        nonlocal reset_count
+        reset_count += 1
+
+    adapter.modelReset.connect(_record_reset)
+    adapter.dataChanged.connect(
+        lambda top, bottom, _roles: changed_ranges.append((top.row(), bottom.row()))
+    )
+
+    adapter._on_source_changed()
+    mock_store.count.return_value = 3
+    mock_store.snapshot_signature.return_value = (3, (0, 2), 2)
+    adapter._on_source_changed()
+
+    assert reset_count == 2
+    assert changed_ranges == []
