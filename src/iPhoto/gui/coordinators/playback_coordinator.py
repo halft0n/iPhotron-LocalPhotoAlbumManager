@@ -448,6 +448,12 @@ class PlaybackCoordinator(QObject):
         previous = self._current_presentation
         if previous is not None:
             presentation = self._preserve_live_presentation(previous, presentation)
+        preview_metadata = self._location_preview_metadata_for_path(presentation.path)
+        if preview_metadata is not None:
+            presentation = self._apply_location_metadata_to_presentation(
+                presentation,
+                preview_metadata,
+            )
         if not self._router.is_detail_view_active():
             self._clear_play_profile(presentation.row)
             return
@@ -1306,6 +1312,11 @@ class PlaybackCoordinator(QObject):
             self._info_panel.set_location_busy(True)
             self._info_panel.set_location_suggestions([])
 
+        self._apply_location_assignment_to_current_presentation(
+            presentation.path,
+            self._location_preview_metadata,
+            display_name=display_name,
+        )
         if presentation.is_video:
             self._defer_location_video_loading(presentation.path)
         self._release_current_video_for_location_write(presentation)
@@ -1337,6 +1348,10 @@ class PlaybackCoordinator(QObject):
             LOGGER.warning("Failed to start location assignment worker", exc_info=True)
             self._allow_location_video_loading(presentation.path)
             self._restore_video_released_for_location_write()
+            if self._location_preview_path == presentation.path:
+                self._location_preview_path = None
+                self._location_preview_metadata = None
+                self._detail_vm.refresh_current()
             self._location_assign_inflight = False
             self._location_assign_path = None
             if self._info_panel is not None:
@@ -1417,9 +1432,7 @@ class PlaybackCoordinator(QObject):
         self._info_panel_metadata_cache[path_key] = dict(metadata)
         self._info_panel_metadata_attempted.add(path_key)
         self._info_panel_metadata_inflight.discard(path_key)
-        if self._location_preview_path == asset_path:
-            self._location_preview_path = None
-            self._location_preview_metadata = None
+        should_clear_location_preview = self._location_preview_path == asset_path
 
         self._apply_location_assignment_to_current_presentation(
             asset_path,
@@ -1432,6 +1445,9 @@ class PlaybackCoordinator(QObject):
             self._location_assign_inflight = False
             self._location_assign_path = None
         self._detail_vm.refresh_current()
+        if should_clear_location_preview:
+            self._location_preview_path = None
+            self._location_preview_metadata = None
 
         library_manager = getattr(self, "_library_manager", None)
         invalidate = getattr(library_manager, "invalidate_geotagged_assets_cache", None)
@@ -1447,17 +1463,20 @@ class PlaybackCoordinator(QObject):
             except Exception:  # noqa: BLE001
                 LOGGER.warning("Failed to invalidate cached location-session data", exc_info=True)
 
-    def _apply_location_assignment_to_current_presentation(
+    def _location_preview_metadata_for_path(self, path: Path) -> dict[str, Any] | None:
+        preview_path = getattr(self, "_location_preview_path", None)
+        preview_metadata = getattr(self, "_location_preview_metadata", None)
+        if preview_path == Path(path) and isinstance(preview_metadata, dict):
+            return preview_metadata
+        return None
+
+    def _apply_location_metadata_to_presentation(
         self,
-        asset_path: Path,
+        presentation: DetailPresentation,
         metadata: dict[str, Any],
         *,
         display_name: object = None,
-    ) -> DetailPresentation | None:
-        presentation = getattr(self, "_current_presentation", None)
-        if presentation is None or presentation.path != asset_path:
-            return None
-
+    ) -> DetailPresentation:
         merged_info = self._merge_info_panel_metadata(presentation.info, metadata)
         location_value = (
             metadata.get("location")
@@ -1473,10 +1492,27 @@ class PlaybackCoordinator(QObject):
         if location:
             merged_info["location"] = location
 
-        updated = replace(
+        return replace(
             presentation,
             info=merged_info,
             location=location,
+        )
+
+    def _apply_location_assignment_to_current_presentation(
+        self,
+        asset_path: Path,
+        metadata: dict[str, Any],
+        *,
+        display_name: object = None,
+    ) -> DetailPresentation | None:
+        presentation = getattr(self, "_current_presentation", None)
+        if presentation is None or presentation.path != asset_path:
+            return None
+
+        updated = self._apply_location_metadata_to_presentation(
+            presentation,
+            metadata,
+            display_name=display_name,
         )
         self._current_presentation = updated
         self._update_header(updated)
@@ -1554,6 +1590,10 @@ class PlaybackCoordinator(QObject):
         if self._location_preview_path == location_assign_path:
             self._location_preview_path = None
             self._location_preview_metadata = None
+            detail_vm = getattr(self, "_detail_vm", None)
+            refresh_current = getattr(detail_vm, "refresh_current", None)
+            if callable(refresh_current):
+                refresh_current()
         info_panel = getattr(self, "_info_panel", None)
         presentation = getattr(self, "_current_presentation", None)
         if (
