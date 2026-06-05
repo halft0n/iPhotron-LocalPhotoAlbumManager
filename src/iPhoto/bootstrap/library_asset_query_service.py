@@ -726,6 +726,12 @@ class LibraryAssetQueryService:
         elif query.has_gps is True:
             collection_type = CollectionType.MAP
 
+        min_thumbnail_state = (
+            None
+            if query.album_path == RECENTLY_DELETED_DIR_NAME
+            else "ready"
+        )
+
         return CollectionQuery(
             collection_type=collection_type,
             album_path=query.album_path,
@@ -737,7 +743,7 @@ class LibraryAssetQueryService:
             date_to=query.date_to,
             sort_key="sort_ts",
             sort_direction=SortDirection.DESC,
-            min_thumbnail_state=None,
+            min_thumbnail_state=min_thumbnail_state,
         )
 
     @staticmethod

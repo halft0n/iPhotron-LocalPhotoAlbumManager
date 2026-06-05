@@ -261,11 +261,14 @@ class QueryBuilder:
         if cursor is not None:
             sort_col = QueryBuilder._collection_sort_column(collection_query)
             direction = collection_query.sort_direction
+            sort_value = cursor.sort_value
+            if sort_value is None:
+                sort_value = cursor.sort_ts
             if direction == SortDirection.ASC:
                 where_clauses.append(f"({sort_col} > ? OR ({sort_col} = ? AND id > ?))")
             else:
                 where_clauses.append(f"({sort_col} < ? OR ({sort_col} = ? AND id < ?))")
-            params.extend([cursor.sort_ts, cursor.sort_ts, cursor.asset_id])
+            params.extend([sort_value, sort_value, cursor.asset_id])
 
         query = f"{select_clause} FROM assets"
         if where_clauses:

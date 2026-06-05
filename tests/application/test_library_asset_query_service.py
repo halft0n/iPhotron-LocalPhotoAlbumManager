@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 from iPhoto.bootstrap.library_asset_query_service import LibraryAssetQueryService
+from iPhoto.cache.index_store import IndexStore
 from iPhoto.config import RECENTLY_DELETED_DIR_NAME
 from iPhoto.domain.models.core import MediaType
 from iPhoto.domain.models.query import AssetQuery
@@ -314,6 +315,92 @@ def test_count_query_assets_keeps_unrepresented_live_date_filters_in_memory(
 
     assert count == 1
     assert repo.count_calls == []
+
+
+def test_query_asset_window_hides_non_ready_thumbnail_rows(tmp_path: Path) -> None:
+    library_root = tmp_path / "Library"
+    library_root.mkdir()
+    repo = IndexStore(library_root)
+    base = datetime(2024, 1, 1)
+    repo.write_rows(
+        [
+            {
+                "rel": "stale.jpg",
+                "id": "stale",
+                "dt": "2024-01-01T00:00:03",
+                "ts": int(base.timestamp() * 1_000_000) + 3,
+                "media_type": 0,
+                "thumbnail_state": "stale",
+            },
+            {
+                "rel": "failed.jpg",
+                "id": "failed",
+                "dt": "2024-01-01T00:00:02",
+                "ts": int(base.timestamp() * 1_000_000) + 2,
+                "media_type": 0,
+                "thumbnail_state": "failed",
+            },
+            {
+                "rel": "ready.jpg",
+                "id": "ready",
+                "dt": "2024-01-01T00:00:01",
+                "ts": int(base.timestamp() * 1_000_000) + 1,
+                "media_type": 0,
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-ready",
+            },
+        ]
+    )
+    service = LibraryAssetQueryService(
+        library_root,
+        repository_factory=lambda _root: repo,
+    )
+
+    window = service.read_query_asset_window(library_root, AssetQuery(), 0, 10)
+
+    assert window.total_count == 1
+    assert [row["id"] for row in window.rows] == ["ready"]
+
+
+def test_recently_deleted_query_includes_non_ready_thumbnail_rows(tmp_path: Path) -> None:
+    library_root = tmp_path / "Library"
+    library_root.mkdir()
+    repo = IndexStore(library_root)
+    base = datetime(2024, 1, 1)
+    repo.write_rows(
+        [
+            {
+                "rel": f"{RECENTLY_DELETED_DIR_NAME}/failed.jpg",
+                "id": "failed",
+                "dt": "2024-01-01T00:00:02",
+                "ts": int(base.timestamp() * 1_000_000) + 2,
+                "parent_album_path": RECENTLY_DELETED_DIR_NAME,
+                "media_type": 0,
+                "is_deleted": 1,
+                "thumbnail_state": "failed",
+            },
+            {
+                "rel": f"{RECENTLY_DELETED_DIR_NAME}/stale.jpg",
+                "id": "stale",
+                "dt": "2024-01-01T00:00:01",
+                "ts": int(base.timestamp() * 1_000_000) + 1,
+                "parent_album_path": RECENTLY_DELETED_DIR_NAME,
+                "media_type": 0,
+                "is_deleted": 1,
+                "thumbnail_state": "stale",
+            },
+        ]
+    )
+    service = LibraryAssetQueryService(
+        library_root,
+        repository_factory=lambda _root: repo,
+    )
+    query = AssetQuery(album_path=RECENTLY_DELETED_DIR_NAME)
+
+    window = service.read_query_asset_window(library_root, query, 0, 10)
+
+    assert service.count_query_assets(query) == 2
+    assert [row["id"] for row in window.rows] == ["failed", "stale"]
 
 
 def test_thumbnail_backfill_request_is_deferred_off_call_path(tmp_path: Path) -> None:

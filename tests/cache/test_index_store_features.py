@@ -8,7 +8,12 @@ import pytest
 from iPhoto.cache.index_store import IndexStore
 from iPhoto.cache.index_store.queries import QueryBuilder
 from iPhoto.config import RECENTLY_DELETED_DIR_NAME
-from iPhoto.domain.models.query import CollectionQuery, CollectionType, PageCursor
+from iPhoto.domain.models.query import (
+    CollectionQuery,
+    CollectionType,
+    PageCursor,
+    SortDirection,
+)
 
 
 @pytest.fixture
@@ -433,6 +438,37 @@ def test_collection_page_uses_sort_ts_keyset_cursor(store: IndexStore) -> None:
     assert [row["id"] for row in second.rows] == ["asset-2", "asset-1"]
 
 
+def test_collection_page_uses_active_sort_key_cursor(store: IndexStore) -> None:
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"{name}.jpg",
+            "id": name,
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "media_type": 0,
+            "thumb_cache_key": f"thumb-{name}",
+        }
+        for index, name in enumerate(("a", "b", "c", "d"))
+    )
+
+    query = CollectionQuery(
+        collection_type=CollectionType.ALL_PHOTOS,
+        sort_key="rel",
+        sort_direction=SortDirection.ASC,
+    )
+    first = store.read_collection_page(query, limit=2)
+    assert [row["id"] for row in first.rows] == ["a", "b"]
+    assert first.next_cursor == PageCursor(
+        sort_ts=first.rows[-1]["sort_ts"],
+        asset_id="b",
+        sort_value="b.jpg",
+    )
+
+    second = store.read_collection_page(query, cursor=first.next_cursor, limit=2)
+    assert [row["id"] for row in second.rows] == ["c", "d"]
+
+
 def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Path) -> None:
     library_root = store.library_root
     base = datetime(2024, 1, 1)
@@ -454,6 +490,34 @@ def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Pa
     assert store.find_row_by_path(query, library_root / "Album" / "photo-3.jpg") == 0
     assert store.find_row_by_path(query, library_root / "Album" / "photo-1.jpg") == 2
     assert store.find_row_by_path(query, tmp_path / "outside.jpg") is None
+
+
+def test_find_row_by_path_uses_active_sort_key(store: IndexStore) -> None:
+    library_root = store.library_root
+    base = datetime(2024, 1, 1)
+    store.write_rows(
+        {
+            "rel": f"Album/{name}.jpg",
+            "id": name,
+            "dt": (base + timedelta(seconds=index)).isoformat(),
+            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "parent_album_path": "Album",
+            "media_type": 0,
+            "thumb_cache_key": f"thumb-{name}",
+        }
+        for index, name in enumerate(("c", "a", "b"))
+    )
+
+    query = CollectionQuery(
+        collection_type=CollectionType.ALBUM,
+        album_path="Album",
+        sort_key="rel",
+        sort_direction=SortDirection.ASC,
+    )
+
+    assert store.find_row_by_path(query, library_root / "Album" / "a.jpg") == 0
+    assert store.find_row_by_path(query, library_root / "Album" / "b.jpg") == 1
+    assert store.find_row_by_path(query, library_root / "Album" / "c.jpg") == 2
 
 
 def test_collection_window_uses_anchor_seek_for_deep_offsets(

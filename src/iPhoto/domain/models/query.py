@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # Import MediaType from core domain model to be Single Source of Truth
 # Import from .core to avoid circular dependency with __init__.py
@@ -63,6 +63,7 @@ class CollectionQuery:
 class PageCursor:
     sort_ts: int
     asset_id: str
+    sort_value: Any | None = None
 
 
 @dataclass(frozen=True)

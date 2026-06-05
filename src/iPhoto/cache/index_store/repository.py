@@ -876,7 +876,7 @@ class AssetRepository:
         try:
             conn.row_factory = sqlite3.Row
             rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
-            next_cursor = self._page_cursor_from_row(rows[-1]) if rows else None
+            next_cursor = self._page_cursor_from_row(query, rows[-1]) if rows else None
             result = PageResult(
                 rows=rows,
                 next_cursor=next_cursor,
@@ -1201,7 +1201,7 @@ class AssetRepository:
                 return None
 
             anchor_index += len(rows)
-            cursor = self._page_cursor_from_row(dict(rows[-1]))
+            cursor = self._page_cursor_from_row(query, dict(rows[-1]))
             anchors[anchor_index] = cursor
             self._prune_collection_anchor_cache(query)
 
@@ -1218,8 +1218,11 @@ class AssetRepository:
         if row is None:
             return None
         asset_id = str(row.get("id") or "")
-        sort_ts = row.get("sort_ts") if row.get("sort_ts") is not None else row.get("ts")
-        if not asset_id or sort_ts is None:
+        sort_col = QueryBuilder._collection_sort_column(query)
+        sort_value = row.get(sort_col)
+        if sort_value is None and sort_col == "sort_ts":
+            sort_value = row.get("ts")
+        if not asset_id or sort_value is None:
             return None
 
         match_sql, match_params = QueryBuilder.build_collection_query(
@@ -1239,10 +1242,14 @@ class AssetRepository:
 
             before_where, before_params = QueryBuilder.build_collection_where(query)
             if query.sort_direction.value == "ASC":
-                before_where.append("(sort_ts < ? OR (sort_ts = ? AND id < ?))")
+                before_where.append(
+                    f"({sort_col} < ? OR ({sort_col} = ? AND id < ?))"
+                )
             else:
-                before_where.append("(sort_ts > ? OR (sort_ts = ? AND id > ?))")
-            before_params.extend([sort_ts, sort_ts, asset_id])
+                before_where.append(
+                    f"({sort_col} > ? OR ({sort_col} = ? AND id > ?))"
+                )
+            before_params.extend([sort_value, sort_value, asset_id])
             before_sql = "SELECT COUNT(*) FROM assets WHERE " + " AND ".join(before_where)
             before = conn.execute(before_sql, before_params).fetchone()
             return int(before[0] if before else 0)
@@ -1532,7 +1539,7 @@ class AssetRepository:
         anchors = self._collection_anchor_cache.setdefault(query, {0: None})
         if first <= 0:
             anchors[0] = None
-        cursor = self._page_cursor_from_row(rows[-1])
+        cursor = self._page_cursor_from_row(query, rows[-1])
         if cursor is not None:
             anchors[max(0, first) + len(rows)] = cursor
             self._prune_collection_anchor_cache(query)
@@ -1552,12 +1559,24 @@ class AssetRepository:
         self._collection_meta_cache.clear()
 
     @staticmethod
-    def _page_cursor_from_row(row: dict[str, Any]) -> PageCursor | None:
+    def _page_cursor_from_row(
+        query: CollectionQuery,
+        row: dict[str, Any],
+    ) -> PageCursor | None:
         asset_id = row.get("id")
         sort_ts = row.get("sort_ts") if row.get("sort_ts") is not None else row.get("ts")
         if asset_id is None or sort_ts is None:
             return None
-        return PageCursor(sort_ts=int(sort_ts), asset_id=str(asset_id))
+        sort_col = QueryBuilder._collection_sort_column(query)
+        sort_value = row.get(sort_col)
+        if sort_value is None and sort_col == "sort_ts":
+            sort_value = sort_ts
+        cursor_sort_value = None if sort_col == "sort_ts" else sort_value
+        return PageCursor(
+            sort_ts=int(sort_ts),
+            asset_id=str(asset_id),
+            sort_value=cursor_sort_value,
+        )
 
     def _library_relative_path(self, path: Path) -> str:
         candidate = Path(path)
