@@ -1372,6 +1372,11 @@ class PlaybackCoordinator(QObject):
             self._location_preview_path = None
             self._location_preview_metadata = None
 
+        self._apply_location_assignment_to_current_presentation(
+            asset_path,
+            metadata,
+            display_name=getattr(result, "display_name", None),
+        )
         self._restore_video_released_for_location_write()
         self._detail_vm.refresh_current()
 
@@ -1388,6 +1393,43 @@ class PlaybackCoordinator(QObject):
                 invalidate_location_session()
             except Exception:  # noqa: BLE001
                 LOGGER.warning("Failed to invalidate cached location-session data", exc_info=True)
+
+    def _apply_location_assignment_to_current_presentation(
+        self,
+        asset_path: Path,
+        metadata: dict[str, Any],
+        *,
+        display_name: object = None,
+    ) -> DetailPresentation | None:
+        presentation = getattr(self, "_current_presentation", None)
+        if presentation is None or presentation.path != asset_path:
+            return None
+
+        merged_info = self._merge_info_panel_metadata(presentation.info, metadata)
+        location_value = (
+            metadata.get("location")
+            or metadata.get("place")
+            or metadata.get("location_name")
+            or display_name
+        )
+        location = (
+            str(location_value).strip()
+            if isinstance(location_value, str) and str(location_value).strip()
+            else presentation.location
+        )
+        if location:
+            merged_info["location"] = location
+
+        updated = replace(
+            presentation,
+            info=merged_info,
+            location=location,
+        )
+        self._current_presentation = updated
+        self._update_header(updated)
+        if self._info_panel is not None and updated.info_panel_visible:
+            self._refresh_info_panel(updated.info)
+        return updated
 
     def _is_missing_exiftool_error(self, message: str) -> bool:
         normalized = message.casefold()
