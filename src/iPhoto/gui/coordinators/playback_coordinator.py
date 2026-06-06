@@ -55,6 +55,7 @@ _INFO_PANEL_METADATA_CACHE_MAX = 200
 _LOCATION_SEARCH_RESULT_LIMIT = 5
 _LOCATION_SEARCH_DEBOUNCE_MS = 80
 _LOCATION_EXTENSION_PROMPT = "Install the map extension to use Assign a Location."
+_LOCATION_VIDEO_WRITE_PLACEHOLDER = "Writing data, please wait..."
 _LOCATION_EXIFTOOL_LIMITED_TITLE = "功能受限"
 _LOCATION_EXIFTOOL_LIMITED_MESSAGE = (
     "地点已保存到本机图库数据库。\n\n"
@@ -537,9 +538,9 @@ class PlaybackCoordinator(QObject):
         if presentation.is_video:
             self._hide_face_name_overlay(clear_annotations=True)
             if self._is_location_video_write_inflight(source):
+                self._player_view.show_placeholder(_LOCATION_VIDEO_WRITE_PLACEHOLDER)
                 if self._player_view.video_area.has_video():
                     self._player_view.video_area.stop()
-                self._player_view.show_placeholder()
                 self._player_bar.setEnabled(False)
                 self._zoom_handler.set_viewer(self._player_view.video_area)
                 self._zoom_widget.show()
@@ -1316,6 +1317,7 @@ class PlaybackCoordinator(QObject):
             presentation.path,
             self._location_preview_metadata,
             display_name=display_name,
+            refresh_info_panel=False,
         )
         if presentation.is_video:
             self._defer_location_video_loading(presentation.path)
@@ -1376,6 +1378,8 @@ class PlaybackCoordinator(QObject):
         self._location_released_video_position_ms = (
             max(0, int(current_position())) if callable(current_position) else None
         )
+        self._player_view.show_placeholder(_LOCATION_VIDEO_WRITE_PLACEHOLDER)
+        self._player_bar.setEnabled(False)
         stop()
 
     def _restore_video_released_for_location_write(self) -> None:
@@ -1438,13 +1442,13 @@ class PlaybackCoordinator(QObject):
             asset_path,
             metadata,
             display_name=getattr(result, "display_name", None),
+            refresh_info_panel=False,
         )
         if not self._is_location_video_write_inflight(asset_path):
             self._restore_video_released_for_location_write()
         if getattr(self, "_location_assign_path", None) == asset_path:
             self._location_assign_inflight = False
             self._location_assign_path = None
-        self._detail_vm.refresh_current()
         if should_clear_location_preview:
             self._location_preview_path = None
             self._location_preview_metadata = None
@@ -1504,6 +1508,7 @@ class PlaybackCoordinator(QObject):
         metadata: dict[str, Any],
         *,
         display_name: object = None,
+        refresh_info_panel: bool = True,
     ) -> DetailPresentation | None:
         presentation = getattr(self, "_current_presentation", None)
         if presentation is None or presentation.path != asset_path:
@@ -1514,9 +1519,15 @@ class PlaybackCoordinator(QObject):
             metadata,
             display_name=display_name,
         )
+        if updated == presentation:
+            return presentation
         self._current_presentation = updated
         self._update_header(updated)
-        if self._info_panel is not None and updated.info_panel_visible:
+        if (
+            refresh_info_panel
+            and self._info_panel is not None
+            and updated.info_panel_visible
+        ):
             self._refresh_info_panel(updated.info)
         return updated
 
@@ -1595,16 +1606,7 @@ class PlaybackCoordinator(QObject):
             if callable(refresh_current):
                 refresh_current()
         info_panel = getattr(self, "_info_panel", None)
-        presentation = getattr(self, "_current_presentation", None)
-        if (
-            info_panel is not None
-            and presentation is not None
-            and info_panel.isVisible()
-            and location_assign_path is not None
-            and presentation.path == location_assign_path
-        ):
-            self._refresh_info_panel(presentation.info)
-        elif info_panel is not None:
+        if info_panel is not None:
             info_panel.set_location_busy(False)
 
     @Slot()
@@ -1618,11 +1620,7 @@ class PlaybackCoordinator(QObject):
         self._location_assign_inflight = False
         self._location_assign_path = None
         info_panel = getattr(self, "_info_panel", None)
-        presentation = getattr(self, "_current_presentation", None)
         if info_panel is None:
-            return
-        if presentation is not None and info_panel.isVisible():
-            self._refresh_info_panel(presentation.info)
             return
         info_panel.set_location_busy(False)
 

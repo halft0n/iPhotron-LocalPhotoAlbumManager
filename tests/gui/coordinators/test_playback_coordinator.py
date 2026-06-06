@@ -334,6 +334,9 @@ def test_render_presentation_defers_video_load_during_location_file_write() -> N
         show_video_surface=Mock(),
         video_area=video_area,
     )
+    parent = Mock()
+    parent.attach_mock(coordinator._player_view.show_placeholder, "show_placeholder")
+    parent.attach_mock(video_area.stop, "stop")
     coordinator._favorite_button = Mock(setEnabled=Mock())
     coordinator._info_button = Mock(setEnabled=Mock())
     coordinator._share_button = Mock(setEnabled=Mock())
@@ -353,7 +356,13 @@ def test_render_presentation_defers_video_load_during_location_file_write() -> N
     PlaybackCoordinator._render_presentation(coordinator, presentation)
 
     video_area.stop.assert_called_once_with()
-    coordinator._player_view.show_placeholder.assert_called_once_with()
+    coordinator._player_view.show_placeholder.assert_called_once_with(
+        playback_coordinator_module._LOCATION_VIDEO_WRITE_PLACEHOLDER
+    )
+    assert parent.mock_calls[:2] == [
+        call.show_placeholder(playback_coordinator_module._LOCATION_VIDEO_WRITE_PLACEHOLDER),
+        call.stop(),
+    ]
     coordinator._player_view.show_video_surface.assert_not_called()
     video_area.load_video.assert_not_called()
     video_area.play.assert_not_called()
@@ -914,7 +923,11 @@ def test_location_assignment_releases_current_video_source_before_write() -> Non
         current_position=Mock(return_value=1234),
         stop=Mock(),
     )
-    coordinator._player_view = Mock(video_area=video_area)
+    coordinator._player_view = Mock(video_area=video_area, show_placeholder=Mock())
+    coordinator._player_bar = Mock(setEnabled=Mock())
+    parent = Mock()
+    parent.attach_mock(coordinator._player_view.show_placeholder, "show_placeholder")
+    parent.attach_mock(video_area.stop, "stop")
     coordinator._location_released_video_path = None
     coordinator._location_released_video_was_playing = False
     coordinator._location_released_video_position_ms = None
@@ -923,6 +936,14 @@ def test_location_assignment_releases_current_video_source_before_write() -> Non
     PlaybackCoordinator._release_current_video_for_location_write(coordinator, presentation)
 
     video_area.stop.assert_called_once_with()
+    coordinator._player_view.show_placeholder.assert_called_once_with(
+        playback_coordinator_module._LOCATION_VIDEO_WRITE_PLACEHOLDER
+    )
+    assert parent.mock_calls[:2] == [
+        call.show_placeholder(playback_coordinator_module._LOCATION_VIDEO_WRITE_PLACEHOLDER),
+        call.stop(),
+    ]
+    coordinator._player_bar.setEnabled.assert_called_once_with(False)
     assert coordinator._location_released_video_path == Path("/fake/video.mp4")
     assert coordinator._location_released_video_was_playing is False
     assert coordinator._location_released_video_position_ms == 1234
@@ -1004,6 +1025,7 @@ def test_location_confirm_updates_current_header_immediately(monkeypatch: pytest
         48.137154,
         11.576124,
     )
+    coordinator._refresh_info_panel.assert_not_called()
     thread_pool.start.assert_called_once()
 
 
@@ -1086,14 +1108,14 @@ def test_location_assignment_ready_refreshes_current_video_header_before_restore
     assert updated.info["location"] == "Munich"
     assert updated.info["gps"] == {"lat": 48.137154, "lon": 11.576124}
     coordinator._update_header.assert_called_with(updated)
-    coordinator._refresh_info_panel.assert_called_once_with(updated.info)
+    coordinator._refresh_info_panel.assert_not_called()
     coordinator._render_presentation.assert_called_once_with(updated)
     video_area.seek.assert_called_once_with(1234)
     video_area.pause.assert_called_once_with()
-    coordinator._detail_vm.refresh_current.assert_called_once_with()
+    coordinator._detail_vm.refresh_current.assert_not_called()
 
 
-def test_location_assignment_ready_refresh_current_does_not_revert_preview_header() -> None:
+def test_location_assignment_ready_does_not_request_extra_presentation_refresh() -> None:
     coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
     asset_path = Path("/fake/video.mp4")
     metadata = {
@@ -1152,6 +1174,7 @@ def test_location_assignment_ready_refresh_current_does_not_revert_preview_heade
     assert coordinator._location_preview_path is None
     assert coordinator._location_preview_metadata is None
     assert coordinator._update_header.call_args.args[0].location == "Munich"
+    coordinator._detail_vm.refresh_current.assert_not_called()
 
 
 def test_location_assignment_error_reverts_pending_header_preview() -> None:
@@ -1165,8 +1188,9 @@ def test_location_assignment_error_reverts_pending_header_preview() -> None:
     }
     coordinator._detail_vm = Mock(refresh_current=Mock())
     coordinator._location_released_video_path = None
-    coordinator._info_panel = Mock(isVisible=Mock(return_value=False), set_location_busy=Mock())
+    coordinator._info_panel = Mock(isVisible=Mock(return_value=True), set_location_busy=Mock())
     coordinator._current_presentation = _make_presentation(path=str(asset_path), is_video=True)
+    coordinator._refresh_info_panel = Mock()
 
     PlaybackCoordinator._handle_location_assignment_error(coordinator, "database unavailable")
 
@@ -1174,6 +1198,7 @@ def test_location_assignment_error_reverts_pending_header_preview() -> None:
     assert coordinator._location_preview_metadata is None
     coordinator._detail_vm.refresh_current.assert_called_once_with()
     coordinator._info_panel.set_location_busy.assert_called_once_with(False)
+    coordinator._refresh_info_panel.assert_not_called()
 
 
 def test_location_assignment_ready_keeps_current_video_released_while_file_write_inflight() -> None:
@@ -1225,7 +1250,7 @@ def test_location_assignment_ready_keeps_current_video_released_while_file_write
     assert coordinator._location_assign_path is None
     assert coordinator._location_released_video_path == asset_path
     coordinator._render_presentation.assert_not_called()
-    coordinator._detail_vm.refresh_current.assert_called_once_with()
+    coordinator._detail_vm.refresh_current.assert_not_called()
 
 
 def test_location_assignment_ready_ignores_non_current_asset_for_header_refresh() -> None:
@@ -1268,7 +1293,7 @@ def test_location_assignment_ready_ignores_non_current_asset_for_header_refresh(
     assert coordinator._current_presentation.location == "Paris"
     coordinator._update_header.assert_not_called()
     coordinator._render_presentation.assert_not_called()
-    coordinator._detail_vm.refresh_current.assert_called_once_with()
+    coordinator._detail_vm.refresh_current.assert_not_called()
 
 
 def test_location_assignment_ready_with_file_write_error_still_updates_library_state(
@@ -1320,7 +1345,7 @@ def test_location_assignment_ready_with_file_write_error_still_updates_library_s
     assert coordinator._info_panel_metadata_inflight == set()
     assert coordinator._location_preview_path is None
     assert coordinator._location_preview_metadata is None
-    coordinator._detail_vm.refresh_current.assert_called_once_with()
+    coordinator._detail_vm.refresh_current.assert_not_called()
     assert "GPS metadata was not written" in caplog.text
     coordinator._queue_location_exiftool_missing_warning.assert_called_once_with()
     show_warning.assert_called_once_with(
@@ -1407,6 +1432,25 @@ def test_location_file_write_finished_restores_released_current_video() -> None:
     coordinator._render_presentation.assert_called_once_with(presentation)
     video_area.seek.assert_called_once_with(1234)
     video_area.pause.assert_called_once_with()
+
+
+def test_location_assignment_finished_only_clears_info_panel_busy_state() -> None:
+    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
+    coordinator._location_assign_inflight = True
+    coordinator._location_assign_path = Path("/fake/video.mp4")
+    coordinator._location_video_write_inflight_paths = {Path("/fake/video.mp4")}
+    coordinator._location_released_video_path = Path("/fake/video.mp4")
+    coordinator._restore_video_released_for_location_write = Mock()
+    coordinator._info_panel = Mock(set_location_busy=Mock())
+    coordinator._refresh_info_panel = Mock()
+
+    PlaybackCoordinator._handle_location_assignment_finished(coordinator)
+
+    assert coordinator._location_assign_inflight is False
+    assert coordinator._location_assign_path is None
+    coordinator._info_panel.set_location_busy.assert_called_once_with(False)
+    coordinator._refresh_info_panel.assert_not_called()
+    coordinator._restore_video_released_for_location_write.assert_not_called()
 
 
 def test_location_file_write_finished_renders_current_video_when_user_returned() -> None:
