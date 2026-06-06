@@ -1050,10 +1050,81 @@ class AssetRepository:
             )
             if sql is None:
                 return []
-            return [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+            candidates = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+            if (
+                query.min_thumbnail_state == "ready"
+                and len(candidates) < limit
+                and self._collection_window_reaches_end(conn, query, first, window_rows)
+            ):
+                candidates.extend(
+                    self._stale_candidates_after_window(
+                        conn,
+                        stale_query,
+                        window_rows,
+                        limit=limit - len(candidates),
+                        exclude_rels={
+                            str(row.get("rel"))
+                            for row in candidates
+                            if row.get("rel") is not None
+                        },
+                    )
+                )
+            return candidates
         finally:
             if should_close:
                 conn.close()
+
+    @staticmethod
+    def _collection_window_reaches_end(
+        conn: sqlite3.Connection,
+        query: CollectionQuery,
+        first: int,
+        window_rows: list[dict[str, Any]],
+    ) -> bool:
+        sql, params = QueryBuilder.build_collection_query(
+            query,
+            select_clause="SELECT COUNT(*)",
+            include_order=False,
+        )
+        row = conn.execute(sql, params).fetchone()
+        total = int(row[0] if row else 0)
+        return first + len(window_rows) >= total
+
+    def _stale_candidates_after_window(
+        self,
+        conn: sqlite3.Connection,
+        stale_query: CollectionQuery,
+        window_rows: list[dict[str, Any]],
+        *,
+        limit: int,
+        exclude_rels: set[str],
+    ) -> list[dict[str, Any]]:
+        if limit <= 0 or not window_rows:
+            return []
+        sort_col = QueryBuilder._collection_sort_column(stale_query)
+        bottom_bound = self._collection_sort_bound(window_rows[-1], sort_col)
+        if bottom_bound is None:
+            return []
+
+        where_clauses, params = QueryBuilder.build_collection_where(stale_query)
+        clause, clause_params = self._collection_range_clause(
+            sort_col,
+            bottom_bound,
+            stale_query.sort_direction.value,
+            lower=False,
+        )
+        where_clauses.append(clause)
+        params.extend(clause_params)
+        sql = "SELECT * FROM assets WHERE " + " AND ".join(where_clauses)
+        sql += " " + QueryBuilder.build_collection_order(stale_query)
+        sql += " LIMIT ?"
+        params.append(limit + len(exclude_rels))
+        rows = [self._db_row_to_dict(row) for row in conn.execute(sql, params)]
+        return [
+            row
+            for row in rows
+            if str(row.get("rel")) not in exclude_rels
+        ][:limit]
 
     def _collection_window_rows_for_backfill(
         self,
@@ -1395,9 +1466,10 @@ class AssetRepository:
         """Atomically update GPS/location columns and JSON metadata for one asset."""
 
         gps_payload = json.dumps(gps) if gps is not None else None
+        has_gps = 1 if gps is not None else 0
         with self.transaction() as conn:
-            update_parts = ["gps = ?", "location = ?"]
-            params: list[Any] = [gps_payload, location]
+            update_parts = ["gps = ?", "has_gps = ?", "location = ?"]
+            params: list[Any] = [gps_payload, has_gps, location]
 
             columns = {
                 str(row[1])

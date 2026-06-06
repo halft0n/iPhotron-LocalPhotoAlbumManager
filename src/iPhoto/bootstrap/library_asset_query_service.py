@@ -429,22 +429,21 @@ class LibraryAssetQueryService:
                 ready_row["thumb_error"] = None
                 ready_rows.append(ready_row)
                 self.thumbnail_backfill_progress.emit(root, index, total)
-            if ready_rows:
-                batch = ScanBatchCommitted(
-                    job_id=(
-                        "thumbnail-backfill:"
-                        f"{request_key[0]}:{request_key[1]}:{request_key[2]}"
-                    ),
-                    root=root,
-                    collection_revision=0,
-                    ready_count=len(ready_rows),
-                    rows=ready_rows,
-                    stage_elapsed_ms={},
-                )
-                with self._thumbnail_backfill_lock:
-                    should_emit = not self._thumbnail_backfill_shutdown
-                if should_emit:
-                    self.thumbnail_backfill_completed.emit(batch)
+            batch = ScanBatchCommitted(
+                job_id=(
+                    "thumbnail-backfill:"
+                    f"{request_key[0]}:{request_key[1]}:{request_key[2]}"
+                ),
+                root=root,
+                collection_revision=0,
+                ready_count=len(ready_rows),
+                rows=ready_rows,
+                stage_elapsed_ms={},
+            )
+            with self._thumbnail_backfill_lock:
+                should_emit = not self._thumbnail_backfill_shutdown
+            if should_emit:
+                self.thumbnail_backfill_completed.emit(batch)
         finally:
             with self._thumbnail_backfill_lock:
                 self._thumbnail_backfill_pending.discard(request_key)

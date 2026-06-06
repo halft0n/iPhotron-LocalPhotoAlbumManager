@@ -473,7 +473,7 @@ def test_thumbnail_backfill_completion_publishes_ready_batch(tmp_path: Path) -> 
     assert progress == [(album_root, 0, 1), (album_root, 1, 1)]
 
 
-def test_thumbnail_backfill_failed_rows_do_not_publish_batch(tmp_path: Path) -> None:
+def test_thumbnail_backfill_failed_rows_publish_empty_completion_batch(tmp_path: Path) -> None:
     library_root = tmp_path / "Library"
     album_root = library_root / "Trip"
     album_root.mkdir(parents=True)
@@ -497,7 +497,9 @@ def test_thumbnail_backfill_failed_rows_do_not_publish_batch(tmp_path: Path) -> 
         fn(*args)
 
     assert repo.ready_updates == [("Trip/stale.jpg", {"error": "decode failed"})]
-    assert batches == []
+    assert len(batches) == 1
+    assert batches[0].ready_count == 0
+    assert batches[0].rows == []
     assert service.thumbnail_backfill_pending() is False
 
 

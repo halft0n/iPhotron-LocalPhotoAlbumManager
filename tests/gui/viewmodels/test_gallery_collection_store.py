@@ -408,6 +408,34 @@ def test_scan_batch_can_be_recorded_without_immediate_refresh(tmp_path: Path) ->
     assert store.snapshot_signature()[2] >= 100
 
 
+def test_thumbnail_backfill_completion_releases_requested_window(tmp_path: Path) -> None:
+    asset = Asset(
+        id="existing",
+        album_id="a",
+        path=Path("existing.jpg"),
+        media_type=MediaType.IMAGE,
+        size_bytes=1,
+    )
+    service = _FakeQueryService([asset], library_root=tmp_path)
+    store = GalleryCollectionStore(service, library_root=tmp_path)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(tmp_path, query=AssetQuery())
+    store._thumbnail_backfill_windows = {(0, store.MIN_WINDOW_SIZE)}
+    store._thumbnail_backfill_pending = True
+    batch = SimpleNamespace(
+        job_id=f"thumbnail-backfill:{tmp_path}:0:{store.MIN_WINDOW_SIZE}",
+        root=tmp_path,
+        collection_revision=0,
+        ready_count=0,
+        rows=[],
+    )
+
+    assert store.record_scan_batch(batch) is True
+    assert store._thumbnail_backfill_windows == set()
+    assert store._thumbnail_backfill_pending is False
+    assert store._pending_scan_refresh is True
+
+
 def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
     assets = [
         Asset(

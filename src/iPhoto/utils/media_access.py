@@ -22,7 +22,7 @@ class _MediaPathLock:
     def acquire_read(self) -> None:
         ident = threading.get_ident()
         with self._condition:
-            if self._writer == ident:
+            if self._writer == ident or ident in self._readers:
                 self._readers[ident] = self._readers.get(ident, 0) + 1
                 return
             while self._writer is not None or self._waiting_writers > 0:

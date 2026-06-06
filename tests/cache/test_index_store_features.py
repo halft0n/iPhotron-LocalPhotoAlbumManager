@@ -178,6 +178,32 @@ def test_collection_query_sql_pushdown_filters_visible_media_rows(store: IndexSt
     ]
 
 
+def test_update_asset_geodata_updates_map_collection_membership(store: IndexStore) -> None:
+    store.write_rows(
+        [
+            {
+                "rel": "photo.jpg",
+                "id": "photo",
+                "ts": 1,
+                "thumbnail_state": "ready",
+                "thumb_cache_key": "thumb-photo",
+            }
+        ]
+    )
+    query = CollectionQuery(collection_type=CollectionType.MAP, has_gps=True)
+
+    assert store.count_collection(query) == 0
+
+    store.update_asset_geodata(
+        "photo.jpg",
+        gps={"lat": 48.137154, "lon": 11.576124},
+        location="Munich",
+    )
+
+    assert store.count_collection(query) == 1
+    assert store.get_rows_by_rels(["photo.jpg"])["photo.jpg"]["has_gps"] == 1
+
+
 def test_ready_row_requires_thumbnail_payload(store: IndexStore) -> None:
     base = datetime(2024, 1, 1)
     store.write_rows(
@@ -285,6 +311,31 @@ def test_thumbnail_backfill_candidates_use_visible_window_bounds(
         "asset-00034",
     ]
     assert [row["id"] for row in candidates] == ["asset-00040"]
+
+
+def test_thumbnail_backfill_continues_after_ready_collection_tail(
+    store: IndexStore,
+) -> None:
+    store.write_rows(
+        _thumbnail_backfill_row(index, stale=True)
+        for index in range(500)
+    )
+    query = CollectionQuery()
+
+    first_candidates = store.read_thumbnail_backfill_candidates(query, 0, 300)
+    for row in first_candidates:
+        store.update_thumbnail_ready(
+            row["rel"],
+            thumb_cache_key=f"ready-{row['id']}",
+        )
+
+    second_candidates = store.read_thumbnail_backfill_candidates(query, 0, 300)
+
+    assert len(first_candidates) == 300
+    assert len(second_candidates) == 200
+    assert {row["rel"] for row in first_candidates}.isdisjoint(
+        row["rel"] for row in second_candidates
+    )
 
 
 def test_thumbnail_backfill_top_window_includes_rows_before_first_ready(

@@ -581,10 +581,25 @@ class GalleryCollectionStore:
 
         rows = getattr(batch, "rows", None)
         root = getattr(batch, "root", None)
+        job_id = str(getattr(batch, "job_id", "") or "")
+        is_thumbnail_backfill = job_id.startswith("thumbnail-backfill:")
         revision = getattr(batch, "collection_revision", None)
         if isinstance(revision, int):
             self._collection_revision = max(self._collection_revision, revision)
-        if root is None or not rows:
+        if is_thumbnail_backfill:
+            self._thumbnail_backfill_windows.clear()
+            self._thumbnail_backfill_pending = False
+        if root is None:
+            return False
+        if not rows:
+            if (
+                is_thumbnail_backfill
+                and self._current_query is not None
+                and self._active_root is not None
+                and self._scan_root_matches_active_root(Path(root))
+            ):
+                self._pending_scan_refresh = True
+                return True
             return False
         return self._record_scan_rows(Path(root), list(rows))
 
