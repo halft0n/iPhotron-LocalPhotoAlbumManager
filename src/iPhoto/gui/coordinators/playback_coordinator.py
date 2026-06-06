@@ -156,6 +156,7 @@ class PlaybackCoordinator(QObject):
         self._location_assign_path: Path | None = None
         self._location_preview_path: Path | None = None
         self._location_preview_metadata: dict[str, Any] | None = None
+        self._confirmed_location_metadata: dict[Path, dict[str, Any]] = {}
         self._pending_location_query = ""
         self._location_search_target_path: Path | None = None
         self._location_released_video_path: Path | None = None
@@ -449,6 +450,12 @@ class PlaybackCoordinator(QObject):
         previous = self._current_presentation
         if previous is not None:
             presentation = self._preserve_live_presentation(previous, presentation)
+        confirmed_metadata = self._confirmed_location_metadata_for_path(presentation.path)
+        if confirmed_metadata is not None:
+            presentation = self._apply_location_metadata_to_presentation(
+                presentation,
+                confirmed_metadata,
+            )
         preview_metadata = self._location_preview_metadata_for_path(presentation.path)
         if preview_metadata is not None:
             presentation = self._apply_location_metadata_to_presentation(
@@ -911,6 +918,7 @@ class PlaybackCoordinator(QObject):
         if self._info_panel:
             self._info_panel.close()
         self._clear_info_panel_metadata_state()
+        self._clear_confirmed_location_metadata()
 
     def shutdown(self) -> None:
         self._clear_play_request_state()
@@ -930,6 +938,7 @@ class PlaybackCoordinator(QObject):
             self._info_panel.shutdown()
             self._info_panel.close()
         self._clear_info_panel_metadata_state()
+        self._clear_confirmed_location_metadata()
 
     def _update_header(self, presentation: DetailPresentation | None) -> None:
         if not self._header_controller:
@@ -1437,6 +1446,7 @@ class PlaybackCoordinator(QObject):
         self._info_panel_metadata_attempted.add(path_key)
         self._info_panel_metadata_inflight.discard(path_key)
         should_clear_location_preview = self._location_preview_path == asset_path
+        self._remember_confirmed_location_metadata(asset_path, metadata)
 
         self._apply_location_assignment_to_current_presentation(
             asset_path,
@@ -1466,6 +1476,32 @@ class PlaybackCoordinator(QObject):
                 invalidate_location_session()
             except Exception:  # noqa: BLE001
                 LOGGER.warning("Failed to invalidate cached location-session data", exc_info=True)
+
+    def _remember_confirmed_location_metadata(
+        self,
+        path: Path,
+        metadata: dict[str, Any],
+    ) -> None:
+        if not hasattr(self, "_confirmed_location_metadata"):
+            self._confirmed_location_metadata = {}
+        location_metadata = {
+            key: metadata[key]
+            for key in ("gps", "location", "location_name", "place")
+            if key in metadata
+        }
+        self._confirmed_location_metadata[Path(path)] = location_metadata
+
+    def _confirmed_location_metadata_for_path(self, path: Path) -> dict[str, Any] | None:
+        confirmed = getattr(self, "_confirmed_location_metadata", None)
+        if not isinstance(confirmed, dict):
+            return None
+        metadata = confirmed.get(Path(path))
+        return metadata if isinstance(metadata, dict) else None
+
+    def _clear_confirmed_location_metadata(self) -> None:
+        confirmed = getattr(self, "_confirmed_location_metadata", None)
+        if isinstance(confirmed, dict):
+            confirmed.clear()
 
     def _location_preview_metadata_for_path(self, path: Path) -> dict[str, Any] | None:
         preview_path = getattr(self, "_location_preview_path", None)
