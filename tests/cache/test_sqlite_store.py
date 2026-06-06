@@ -33,6 +33,29 @@ def test_wal_mode_enabled(store: IndexStore, tmp_path: Path) -> None:
         mode = cursor.fetchone()[0]
         assert mode.upper() == "WAL"
 
+
+def test_init_upgrades_collection_indexes_for_unique_keyset_order(
+    store: IndexStore,
+    tmp_path: Path,
+) -> None:
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DROP INDEX idx_assets_visible_global")
+        conn.execute(
+            "CREATE INDEX idx_assets_visible_global "
+            "ON assets (live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"
+        )
+
+    IndexStore(tmp_path)
+
+    with sqlite3.connect(store.path) as conn:
+        columns = [
+            row[2]
+            for row in conn.execute("PRAGMA index_info(idx_assets_visible_global)")
+        ]
+
+    assert columns[-3:] == ["sort_ts", "id", "rel"]
+
+
 def test_write_and_read_rows(store: IndexStore) -> None:
     rows = [
         {"rel": "a.jpg", "id": "1", "dt": "2023-01-01T10:00:00Z", "bytes": 100},

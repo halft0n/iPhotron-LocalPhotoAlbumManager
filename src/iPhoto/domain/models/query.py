@@ -64,6 +64,7 @@ class PageCursor:
     sort_ts: int
     asset_id: str
     sort_value: Any | None = None
+    asset_rel: str | None = None
 
 
 @dataclass(frozen=True)

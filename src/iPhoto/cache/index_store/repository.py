@@ -1198,31 +1198,35 @@ class AssetRepository:
     def _collection_sort_bound(
         row: dict[str, Any],
         sort_col: str,
-    ) -> tuple[Any, str] | None:
+    ) -> tuple[Any, str, str] | None:
         sort_value = row.get(sort_col)
         asset_id = row.get("id")
-        if sort_value is None or asset_id is None:
+        asset_rel = row.get("rel")
+        if sort_value is None or asset_id is None or asset_rel is None:
             return None
-        return sort_value, str(asset_id)
+        return sort_value, str(asset_id), str(asset_rel)
 
     @staticmethod
     def _collection_range_clause(
         sort_col: str,
-        bound: tuple[Any, str],
+        bound: tuple[Any, str, str],
         direction: str,
         *,
         lower: bool,
     ) -> tuple[str, list[Any]]:
-        sort_value, asset_id = bound
+        sort_value, asset_id, asset_rel = bound
         if direction == "ASC":
             operator = "<" if lower else ">"
-            id_operator = "<=" if lower else ">="
+            id_operator = "<" if lower else ">"
+            rel_operator = "<=" if lower else ">="
         else:
             operator = ">" if lower else "<"
-            id_operator = ">=" if lower else "<="
+            id_operator = ">" if lower else "<"
+            rel_operator = ">=" if lower else "<="
         return (
-            f"({sort_col} {operator} ? OR ({sort_col} = ? AND id {id_operator} ?))",
-            [sort_value, sort_value, asset_id],
+            f"({sort_col} {operator} ? OR ({sort_col} = ? AND "
+            f"(id {id_operator} ? OR (id = ? AND rel {rel_operator} ?))))",
+            [sort_value, sort_value, asset_id, asset_id, asset_rel],
         )
 
     @staticmethod
@@ -1330,11 +1334,12 @@ class AssetRepository:
         if row is None:
             return None
         asset_id = str(row.get("id") or "")
+        asset_rel = str(row.get("rel") or "")
         sort_col = QueryBuilder._collection_sort_column(query)
         sort_value = row.get(sort_col)
         if sort_value is None and sort_col == "sort_ts":
             sort_value = row.get("ts")
-        if not asset_id or sort_value is None:
+        if not asset_id or not asset_rel or sort_value is None:
             return None
 
         match_sql, match_params = QueryBuilder.build_collection_query(
@@ -1355,13 +1360,17 @@ class AssetRepository:
             before_where, before_params = QueryBuilder.build_collection_where(query)
             if query.sort_direction.value == "ASC":
                 before_where.append(
-                    f"({sort_col} < ? OR ({sort_col} = ? AND id < ?))"
+                    f"({sort_col} < ? OR ({sort_col} = ? AND "
+                    "(id < ? OR (id = ? AND rel < ?))))"
                 )
             else:
                 before_where.append(
-                    f"({sort_col} > ? OR ({sort_col} = ? AND id > ?))"
+                    f"({sort_col} > ? OR ({sort_col} = ? AND "
+                    "(id > ? OR (id = ? AND rel > ?))))"
                 )
-            before_params.extend([sort_value, sort_value, asset_id])
+            before_params.extend(
+                [sort_value, sort_value, asset_id, asset_id, asset_rel]
+            )
             before_sql = "SELECT COUNT(*) FROM assets WHERE " + " AND ".join(before_where)
             before = conn.execute(before_sql, before_params).fetchone()
             return int(before[0] if before else 0)
@@ -1677,8 +1686,9 @@ class AssetRepository:
         row: dict[str, Any],
     ) -> PageCursor | None:
         asset_id = row.get("id")
+        asset_rel = row.get("rel")
         sort_ts = row.get("sort_ts") if row.get("sort_ts") is not None else row.get("ts")
-        if asset_id is None or sort_ts is None:
+        if asset_id is None or asset_rel is None or sort_ts is None:
             return None
         sort_col = QueryBuilder._collection_sort_column(query)
         sort_value = row.get(sort_col)
@@ -1689,6 +1699,7 @@ class AssetRepository:
             sort_ts=int(sort_ts),
             asset_id=str(asset_id),
             sort_value=cursor_sort_value,
+            asset_rel=str(asset_rel),
         )
 
     def _library_relative_path(self, path: Path) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 from pathlib import Path
 
@@ -105,3 +106,15 @@ def test_media_access_allows_reentrant_read_while_writer_waits(tmp_path: Path) -
     assert writer_entered.wait(timeout=1)
     reader_thread.join(timeout=1)
     writer_thread.join(timeout=1)
+
+
+def test_media_access_releases_idle_path_locks(tmp_path: Path) -> None:
+    coordinator = MediaAccessCoordinator()
+
+    for index in range(100):
+        with coordinator.read(tmp_path / f"asset-{index}.jpg"):
+            pass
+
+    gc.collect()
+
+    assert len(coordinator._locks) == 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import weakref
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -77,7 +78,9 @@ class MediaAccessCoordinator:
     """Coordinate read/write access to media files inside this process."""
 
     def __init__(self) -> None:
-        self._locks: dict[str, _MediaPathLock] = {}
+        self._locks: weakref.WeakValueDictionary[str, _MediaPathLock] = (
+            weakref.WeakValueDictionary()
+        )
         self._registry_lock = threading.Lock()
 
     @contextmanager
@@ -102,7 +105,7 @@ class MediaAccessCoordinator:
     def read_many(self, paths: Iterable[Path]) -> Iterator[None]:
         keys = sorted({self._key_for(path) for path in paths})
         with self._registry_lock:
-            locks = [self._locks[key] for key in keys]
+            locks = [self._lock_for_key(key) for key in keys]
         acquired: list[_MediaPathLock] = []
         try:
             for lock in locks:
@@ -114,17 +117,24 @@ class MediaAccessCoordinator:
                 lock.release_read()
 
     def _lock_for(self, path: Path) -> _MediaPathLock:
-        return self._locks[self._key_for(path)]
+        key = self._key_for(path)
+        with self._registry_lock:
+            return self._lock_for_key(key)
 
-    def _key_for(self, path: Path) -> str:
+    def _lock_for_key(self, key: str) -> _MediaPathLock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = _MediaPathLock()
+            self._locks[key] = lock
+        return lock
+
+    @staticmethod
+    def _key_for(path: Path) -> str:
         try:
             raw = os.path.realpath(path)
         except OSError:
             raw = str(Path(path).absolute())
-        key = os.path.normcase(raw)
-        with self._registry_lock:
-            self._locks.setdefault(key, _MediaPathLock())
-        return key
+        return os.path.normcase(raw)
 
 
 media_access = MediaAccessCoordinator()

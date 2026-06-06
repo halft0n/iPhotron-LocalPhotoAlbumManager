@@ -483,6 +483,7 @@ def test_collection_page_uses_sort_ts_keyset_cursor(store: IndexStore) -> None:
     assert first.next_cursor == PageCursor(
         sort_ts=first.rows[-1]["sort_ts"],
         asset_id="asset-3",
+        asset_rel="photo-3.jpg",
     )
 
     second = store.read_collection_page(query, cursor=first.next_cursor, limit=2)
@@ -514,10 +515,36 @@ def test_collection_page_uses_active_sort_key_cursor(store: IndexStore) -> None:
         sort_ts=first.rows[-1]["sort_ts"],
         asset_id="b",
         sort_value="b.jpg",
+        asset_rel="b.jpg",
     )
 
     second = store.read_collection_page(query, cursor=first.next_cursor, limit=2)
     assert [row["id"] for row in second.rows] == ["c", "d"]
+
+
+def test_collection_page_keeps_duplicate_content_ids(store: IndexStore) -> None:
+    store.write_rows(
+        {
+            "rel": f"duplicate-{index}.jpg",
+            "id": "same-content-id",
+            "dt": "2024-01-01T00:00:00",
+            "ts": 1_704_067_200_000_000,
+            "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
+        }
+        for index in range(4)
+    )
+
+    query = CollectionQuery(collection_type=CollectionType.ALL_PHOTOS)
+    first = store.read_collection_page(query, limit=2)
+    second = store.read_collection_page(query, cursor=first.next_cursor, limit=2)
+
+    assert [row["rel"] for row in first.rows + second.rows] == [
+        "duplicate-3.jpg",
+        "duplicate-2.jpg",
+        "duplicate-1.jpg",
+        "duplicate-0.jpg",
+    ]
 
 
 def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Path) -> None:
@@ -541,6 +568,28 @@ def test_find_row_by_path_uses_collection_lookup(store: IndexStore, tmp_path: Pa
     assert store.find_row_by_path(query, library_root / "Album" / "photo-3.jpg") == 0
     assert store.find_row_by_path(query, library_root / "Album" / "photo-1.jpg") == 2
     assert store.find_row_by_path(query, tmp_path / "outside.jpg") is None
+
+
+def test_find_row_by_path_distinguishes_duplicate_content_ids(store: IndexStore) -> None:
+    library_root = store.library_root
+    store.write_rows(
+        {
+            "rel": f"Album/duplicate-{index}.jpg",
+            "id": "same-content-id",
+            "dt": "2024-01-01T00:00:00",
+            "ts": 1_704_067_200_000_000,
+            "parent_album_path": "Album",
+            "media_type": 0,
+            "thumb_cache_key": f"thumb-{index}",
+        }
+        for index in range(3)
+    )
+
+    query = CollectionQuery(collection_type=CollectionType.ALBUM, album_path="Album")
+
+    assert store.find_row_by_path(query, library_root / "Album/duplicate-2.jpg") == 0
+    assert store.find_row_by_path(query, library_root / "Album/duplicate-1.jpg") == 1
+    assert store.find_row_by_path(query, library_root / "Album/duplicate-0.jpg") == 2
 
 
 def test_find_row_by_path_uses_active_sort_key(store: IndexStore) -> None:
@@ -579,9 +628,9 @@ def test_collection_window_uses_anchor_seek_for_deep_offsets(
     store.write_rows(
         {
             "rel": f"photo-{index:05d}.jpg",
-            "id": f"asset-{index:05d}",
-            "dt": (base + timedelta(seconds=index)).isoformat(),
-            "ts": int((base + timedelta(seconds=index)).timestamp() * 1_000_000),
+            "id": "same-content-id",
+            "dt": base.isoformat(),
+            "ts": int(base.timestamp() * 1_000_000),
             "media_type": 0,
             "thumb_cache_key": f"thumb-{index}",
         }
@@ -606,8 +655,8 @@ def test_collection_window_uses_anchor_seek_for_deep_offsets(
 
     assert window.first == 7_000
     assert len(window.rows) == 120
-    assert window.rows[0]["id"] == "asset-02999"
-    assert window.rows[-1]["id"] == "asset-02880"
+    assert window.rows[0]["rel"] == "photo-02999.jpg"
+    assert window.rows[-1]["rel"] == "photo-02880.jpg"
     assert all(offset == 0 for offset in offsets)
 
 

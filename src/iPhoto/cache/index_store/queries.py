@@ -264,11 +264,44 @@ class QueryBuilder:
             sort_value = cursor.sort_value
             if sort_value is None:
                 sort_value = cursor.sort_ts
-            if direction == SortDirection.ASC:
-                where_clauses.append(f"({sort_col} > ? OR ({sort_col} = ? AND id > ?))")
+            if cursor.asset_rel is None:
+                if direction == SortDirection.ASC:
+                    where_clauses.append(
+                        f"({sort_col} > ? OR ({sort_col} = ? AND id > ?))"
+                    )
+                else:
+                    where_clauses.append(
+                        f"({sort_col} < ? OR ({sort_col} = ? AND id < ?))"
+                    )
+                params.extend([sort_value, sort_value, cursor.asset_id])
+            elif direction == SortDirection.ASC:
+                where_clauses.append(
+                    f"({sort_col} > ? OR ({sort_col} = ? AND "
+                    "(id > ? OR (id = ? AND rel > ?))))"
+                )
+                params.extend(
+                    [
+                        sort_value,
+                        sort_value,
+                        cursor.asset_id,
+                        cursor.asset_id,
+                        cursor.asset_rel,
+                    ]
+                )
             else:
-                where_clauses.append(f"({sort_col} < ? OR ({sort_col} = ? AND id < ?))")
-            params.extend([sort_value, sort_value, cursor.asset_id])
+                where_clauses.append(
+                    f"({sort_col} < ? OR ({sort_col} = ? AND "
+                    "(id < ? OR (id = ? AND rel < ?))))"
+                )
+                params.extend(
+                    [
+                        sort_value,
+                        sort_value,
+                        cursor.asset_id,
+                        cursor.asset_id,
+                        cursor.asset_rel,
+                    ]
+                )
 
         query = f"{select_clause} FROM assets"
         if where_clauses:
@@ -351,7 +384,7 @@ class QueryBuilder:
     def build_collection_order(collection_query: CollectionQuery) -> str:
         sort_col = QueryBuilder._collection_sort_column(collection_query)
         direction = "ASC" if collection_query.sort_direction == SortDirection.ASC else "DESC"
-        return f"ORDER BY {sort_col} {direction}, id {direction}"
+        return f"ORDER BY {sort_col} {direction}, id {direction}, rel {direction}"
 
     @staticmethod
     def _collection_sort_column(collection_query: CollectionQuery) -> str:

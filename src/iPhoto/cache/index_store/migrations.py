@@ -278,6 +278,23 @@ class SchemaMigrator:
         Args:
             conn: An active SQLite connection.
         """
+        keyset_indexes = {
+            "idx_assets_visible_global",
+            "idx_assets_visible_album",
+            "idx_assets_visible_media",
+            "idx_assets_visible_favorite",
+            "idx_assets_gps",
+            "idx_assets_collection_global",
+            "idx_assets_collection_album",
+            "idx_assets_collection_media",
+            "idx_assets_collection_favorite",
+            "idx_assets_collection_gps",
+        }
+        for index_name in keyset_indexes:
+            columns = [row[2] for row in conn.execute(f"PRAGMA index_info({index_name})")]
+            if columns and "rel" not in columns:
+                conn.execute(f"DROP INDEX {index_name}")
+
         # List of all indexes to create
         indexes = [
             # Basic sorting index
@@ -314,25 +331,29 @@ class SchemaMigrator:
              "ON assets (parent_album_path)"),
 
             ("CREATE INDEX IF NOT EXISTS idx_assets_visible_global "
-             "ON assets (live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+             "ON assets (live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_visible_album "
-             "ON assets (parent_album_path, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+             "ON assets (parent_album_path, live_role, is_deleted, thumbnail_state, "
+             "sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_visible_media "
-             "ON assets (media_type, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+             "ON assets (media_type, live_role, is_deleted, thumbnail_state, "
+             "sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_visible_favorite "
-             "ON assets (is_favorite, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+             "ON assets (is_favorite, live_role, is_deleted, thumbnail_state, "
+             "sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_gps "
-             "ON assets (has_gps, live_role, is_deleted, thumbnail_state, sort_ts DESC, id DESC)"),
+             "ON assets (has_gps, live_role, is_deleted, thumbnail_state, "
+             "sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_collection_global "
-             "ON assets (live_role, is_deleted, sort_ts DESC, id DESC)"),
+             "ON assets (live_role, is_deleted, sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_collection_album "
-             "ON assets (parent_album_path, live_role, is_deleted, sort_ts DESC, id DESC)"),
+             "ON assets (parent_album_path, live_role, is_deleted, sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_collection_media "
-             "ON assets (media_type, live_role, is_deleted, sort_ts DESC, id DESC)"),
+             "ON assets (media_type, live_role, is_deleted, sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_collection_favorite "
-             "ON assets (is_favorite, live_role, is_deleted, sort_ts DESC, id DESC)"),
+             "ON assets (is_favorite, live_role, is_deleted, sort_ts DESC, id DESC, rel DESC)"),
             ("CREATE INDEX IF NOT EXISTS idx_assets_collection_gps "
-             "ON assets (has_gps, live_role, is_deleted, sort_ts DESC, id DESC)"),
+             "ON assets (has_gps, live_role, is_deleted, sort_ts DESC, id DESC, rel DESC)"),
             "CREATE INDEX IF NOT EXISTS idx_assets_rel_lookup ON assets (rel)",
             "CREATE INDEX IF NOT EXISTS idx_assets_id_lookup ON assets (id)",
             "CREATE INDEX IF NOT EXISTS idx_assets_revision ON assets (index_revision)",
