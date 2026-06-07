@@ -715,4 +715,158 @@
             <translation>隐藏和可见状态的人物不能合并。请先将两张人物卡片都设为隐藏或可见。</translation>
         </message>
     </context>
+    <context>
+        <name>AlbumSidebar</name>
+        <message>
+            <source>New Album…</source>
+            <translation>新建相册…</translation>
+        </message>
+        <message>
+            <source>New Sub-Album…</source>
+            <translation>新建子相册…</translation>
+        </message>
+        <message>
+            <source>Rename Album…</source>
+            <translation>重命名相册…</translation>
+        </message>
+        <message>
+            <source>Show in File Manager</source>
+            <translation>在文件管理器中显示</translation>
+        </message>
+        <message>
+            <source>Rename…</source>
+            <translation>重命名…</translation>
+        </message>
+        <message>
+            <source>Unpin</source>
+            <translation>取消固定</translation>
+        </message>
+        <message>
+            <source>Set Basic Library…</source>
+            <translation>设置基础图库…</translation>
+        </message>
+        <message>
+            <source>Pin Album</source>
+            <translation>固定相册</translation>
+        </message>
+        <message>
+            <source>Unpin Album</source>
+            <translation>取消固定相册</translation>
+        </message>
+        <message>
+            <source>Rename Pinned Item</source>
+            <translation>重命名固定项</translation>
+        </message>
+        <message>
+            <source>New pinned label:</source>
+            <translation>新的固定项名称：</translation>
+        </message>
+        <message>
+            <source>Pinned label cannot be empty.</source>
+            <translation>固定项名称不能为空。</translation>
+        </message>
+        <message>
+            <source>New Album</source>
+            <translation>新建相册</translation>
+        </message>
+        <message>
+            <source>Album name:</source>
+            <translation>相册名称：</translation>
+        </message>
+        <message>
+            <source>Album name cannot be empty.</source>
+            <translation>相册名称不能为空。</translation>
+        </message>
+        <message>
+            <source>Rename Album</source>
+            <translation>重命名相册</translation>
+        </message>
+        <message>
+            <source>New album name:</source>
+            <translation>新相册名称：</translation>
+        </message>
+        <message>
+            <source>Basic Library — not bound</source>
+            <translation>基础图库 — 未绑定</translation>
+        </message>
+        <message>
+            <source>Basic Library</source>
+            <translation>基础图库</translation>
+        </message>
+        <message>
+            <source>Bind Basic Library…</source>
+            <translation>绑定基础图库…</translation>
+        </message>
+        <message>
+            <source>All Photos</source>
+            <translation>所有照片</translation>
+        </message>
+        <message>
+            <source>Videos</source>
+            <translation>视频</translation>
+        </message>
+        <message>
+            <source>Live Photos</source>
+            <translation>Live Photos</translation>
+        </message>
+        <message>
+            <source>Favorites</source>
+            <translation>个人收藏</translation>
+        </message>
+        <message>
+            <source>People</source>
+            <translation>人物</translation>
+        </message>
+        <message>
+            <source>Location</source>
+            <translation>地点</translation>
+        </message>
+        <message>
+            <source>Pinned</source>
+            <translation>已固定</translation>
+        </message>
+        <message>
+            <source>Albums</source>
+            <translation>相册</translation>
+        </message>
+        <message>
+            <source>Recently Deleted</source>
+            <translation>最近删除</translation>
+        </message>
+    </context>
+    <context>
+        <name>AlbumsDashboard</name>
+        <message>
+            <source>Albums</source>
+            <translation>相册</translation>
+        </message>
+        <message>
+            <source>No albums available</source>
+            <translation>没有可用相册</translation>
+        </message>
+        <message>
+            <source>Rename…</source>
+            <translation>重命名…</translation>
+        </message>
+        <message>
+            <source>Unpin Album</source>
+            <translation>取消固定相册</translation>
+        </message>
+        <message>
+            <source>Pin Album</source>
+            <translation>固定相册</translation>
+        </message>
+        <message>
+            <source>Rename Album</source>
+            <translation>重命名相册</translation>
+        </message>
+        <message>
+            <source>New album name:</source>
+            <translation>新相册名称：</translation>
+        </message>
+        <message>
+            <source>Album name cannot be empty.</source>
+            <translation>相册名称不能为空。</translation>
+        </message>
+    </context>
 </TS>

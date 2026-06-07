@@ -16,8 +16,8 @@ from PySide6.QtWidgets import QApplication, QWidget
 from iPhoto.gui.i18n import TranslationManager
 from iPhoto.gui.i18n.language import LanguageInfo
 from iPhoto.gui.ui.main_window import MainWindow
-from iPhoto.gui.ui.widgets.main_header import MainHeaderWidget
 from iPhoto.gui.ui.widgets.info_panel import InfoPanel
+from iPhoto.gui.ui.widgets.main_header import MainHeaderWidget
 from iPhoto.settings.manager import SettingsManager
 from iPhoto.settings.schema import merge_with_defaults, validate_settings
 
@@ -69,6 +69,7 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
     assert spy.count() >= 1
     assert QCoreApplication.translate("MainHeader", "Language", None) == "语言"
     assert QCoreApplication.translate("InfoPanel", "Download Map Extension", None) == "下载地图扩展"
+    assert QCoreApplication.translate("AlbumSidebar", "Pin Album", None) == "固定相册"
 
     panel = InfoPanel()
     try:

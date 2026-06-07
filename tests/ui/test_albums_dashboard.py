@@ -14,19 +14,20 @@ pytest.importorskip(
     exc_type=ImportError,
 )
 
-from PySide6.QtCore import Qt
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication
 
 from iPhoto.errors import AlbumOperationError
+from iPhoto.gui.i18n import TranslationManager, formatters
 from iPhoto.gui.services.pinned_items_service import PinnedItemsService
-from iPhoto.settings.manager import SettingsManager
-from iPhoto.library.runtime_controller import LibraryRuntimeController
 from iPhoto.gui.ui.widgets.albums_dashboard import (
     AlbumCard,
     AlbumsDashboard,
 )
+from iPhoto.library.runtime_controller import LibraryRuntimeController
+from iPhoto.settings.manager import SettingsManager
+
 
 @pytest.fixture
 def qapp():
@@ -99,7 +100,7 @@ def test_albums_dashboard_populates_cards(qtbot, mock_library):
     mock_library.list_albums.return_value = [album1, album2]
 
     # Prevent thread pool from running workers
-    with patch("PySide6.QtCore.QThreadPool.globalInstance") as mock_pool:
+    with patch("PySide6.QtCore.QThreadPool.globalInstance"):
         dashboard = AlbumsDashboard(mock_library)
         qtbot.addWidget(dashboard)
 
@@ -109,6 +110,74 @@ def test_albums_dashboard_populates_cards(qtbot, mock_library):
 
         # Verify card 1 has correct path
         assert dashboard._cards[album1.path].path == album1.path
+
+
+def test_albums_dashboard_retranslate_updates_header_empty_and_menu(
+    qapp,
+    mock_library,
+    tmp_path,
+):
+    album = MagicMock()
+    album.title = "Trips"
+    album.path = tmp_path / "Trips"
+    mock_library.list_albums.return_value = [album]
+    mock_library.root.return_value = tmp_path
+
+    settings = SettingsManager(path=tmp_path / "settings.json")
+    settings.load()
+    translations = TranslationManager(settings)
+    translations.apply_language("zh-CN")
+
+    with patch("PySide6.QtCore.QThreadPool.globalInstance"):
+        dashboard = AlbumsDashboard(mock_library)
+        qapp.processEvents()
+        dashboard.retranslate_ui()
+
+        assert dashboard.header_label.text() == "相册"
+        assert dashboard.empty_label.text() == "没有可用相册"
+
+        card = dashboard._cards[album.path]
+        menu = dashboard._build_card_menu(card)
+        action_labels = [action.text() for action in menu.actions() if not action.isSeparator()]
+        assert action_labels == ["重命名…", "固定相册"]
+
+    translations._remove_installed_translator(qapp)
+
+
+def test_albums_dashboard_retranslate_reformats_existing_album_counts(
+    qapp,
+    mock_library,
+    tmp_path,
+):
+    album = MagicMock()
+    album.title = "Trips"
+    album.path = tmp_path / "Trips"
+    mock_library.list_albums.return_value = [album]
+    mock_library.root.return_value = tmp_path
+    formatters.set_current_locale("en_US")
+
+    try:
+        with patch("PySide6.QtCore.QThreadPool.globalInstance"):
+            dashboard = AlbumsDashboard(mock_library)
+            qapp.processEvents()
+            dashboard._on_album_data_ready(
+                album,
+                1000,
+                None,
+                album.path,
+                dashboard._current_generation,
+            )
+            card = dashboard._cards[album.path]
+
+            assert card.count_label.text() == "1,000"
+
+            formatters.set_current_locale("de_DE")
+            dashboard.retranslate_ui()
+
+            assert card.count_label.text() == "1.000"
+    finally:
+        formatters.set_current_locale(None)
+
 
 def test_albums_dashboard_relays_signal(qtbot, mock_library):
     """Test that dashboard relays the clicked signal from card."""

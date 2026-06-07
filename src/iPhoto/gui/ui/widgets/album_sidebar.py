@@ -32,31 +32,31 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ....library.runtime_controller import LibraryRuntimeController
 from ....config import ALL_PHOTOS_TITLE as _ALL_PHOTOS_TITLE
+from ....library.runtime_controller import LibraryRuntimeController
+from ...i18n import tr
 from ...services.pinned_items_service import PinnedItemsService, PinnedSidebarItem
-from ..models.album_tree_model import AlbumTreeModel, NodeType
 from ..delegates.album_sidebar_delegate import (
     AlbumSidebarDelegate,
     BranchIndicatorController,
 )
 from ..menus.album_sidebar_menu import show_context_menu
-from ..styles import modern_scrollbar_style
+from ..models.album_tree_model import AlbumTreeModel, NodeType
 from ..palette import (
-    SIDEBAR_BACKGROUND_COLOR,
-    SIDEBAR_SELECTED_BACKGROUND,
     SIDEBAR_ICON_COLOR,
     SIDEBAR_ICON_SIZE,
     SIDEBAR_INDENT_PER_LEVEL,
     SIDEBAR_INDICATOR_HOTZONE_MARGIN,
     SIDEBAR_INDICATOR_SIZE,
-    SIDEBAR_LEFT_PADDING,
     SIDEBAR_LAYOUT_MARGIN,
     SIDEBAR_LAYOUT_SPACING,
+    SIDEBAR_LEFT_PADDING,
+    SIDEBAR_SELECTED_BACKGROUND,
     SIDEBAR_TEXT_COLOR,
     SIDEBAR_TREE_MIN_WIDTH,
     SIDEBAR_TREE_STYLESHEET,
 )
+from ..styles import modern_scrollbar_style
 
 _logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class AlbumSidebar(QWidget):
         # parent widgets are translucent (required for the rounded window shell).
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        self._title = QLabel("Basic Library")
+        self._title = QLabel()
         self._title.setObjectName("albumSidebarTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         # `Ignored` allows the label to be compressed below its size hint so the navigation
@@ -342,6 +342,12 @@ class AlbumSidebar(QWidget):
 
         self._model.refresh()
 
+    def retranslate_ui(self) -> None:
+        """Refresh translated sidebar chrome and model display labels."""
+
+        self._update_title()
+        self._model.retranslate_ui()
+
     def _expand_defaults(self) -> None:
         """Expand high-level nodes to match the reference layout."""
 
@@ -387,12 +393,12 @@ class AlbumSidebar(QWidget):
             # Keep the unbound state explicit so users know they still need to
             # attach a library before navigating, but avoid appending verbose
             # filesystem paths that clutter the chrome.
-            self._title.setText("Basic Library — not bound")
+            self._title.setText(tr("AlbumSidebar", "Basic Library — not bound"))
         else:
             # Always display a concise title without the backing path to keep
             # the window chrome tidy while the sidebar continues to show the
             # simple library name.
-            self._title.setText("Basic Library")
+            self._title.setText(tr("AlbumSidebar", "Basic Library"))
         # Recalculate the manual minimum so manual splitter drags continue to honour the
         # configured width even if the displayed path becomes longer or shorter.
         self._refresh_manual_minimum_width()

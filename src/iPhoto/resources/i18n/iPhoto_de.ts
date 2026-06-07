@@ -715,4 +715,158 @@
             <translation>Ausgeblendete und sichtbare Personen können nicht zusammengeführt werden. Blenden Sie zuerst beide Personenkarten aus oder ein.</translation>
         </message>
     </context>
+    <context>
+        <name>AlbumSidebar</name>
+        <message>
+            <source>New Album…</source>
+            <translation>Neues Album …</translation>
+        </message>
+        <message>
+            <source>New Sub-Album…</source>
+            <translation>Neues Unteralbum …</translation>
+        </message>
+        <message>
+            <source>Rename Album…</source>
+            <translation>Album umbenennen …</translation>
+        </message>
+        <message>
+            <source>Show in File Manager</source>
+            <translation>Im Dateimanager anzeigen</translation>
+        </message>
+        <message>
+            <source>Rename…</source>
+            <translation>Umbenennen …</translation>
+        </message>
+        <message>
+            <source>Unpin</source>
+            <translation>Lösen</translation>
+        </message>
+        <message>
+            <source>Set Basic Library…</source>
+            <translation>Basisbibliothek festlegen …</translation>
+        </message>
+        <message>
+            <source>Pin Album</source>
+            <translation>Album anheften</translation>
+        </message>
+        <message>
+            <source>Unpin Album</source>
+            <translation>Album lösen</translation>
+        </message>
+        <message>
+            <source>Rename Pinned Item</source>
+            <translation>Angeheftetes Element umbenennen</translation>
+        </message>
+        <message>
+            <source>New pinned label:</source>
+            <translation>Neue angeheftete Beschriftung:</translation>
+        </message>
+        <message>
+            <source>Pinned label cannot be empty.</source>
+            <translation>Die angeheftete Beschriftung darf nicht leer sein.</translation>
+        </message>
+        <message>
+            <source>New Album</source>
+            <translation>Neues Album</translation>
+        </message>
+        <message>
+            <source>Album name:</source>
+            <translation>Albumname:</translation>
+        </message>
+        <message>
+            <source>Album name cannot be empty.</source>
+            <translation>Der Albumname darf nicht leer sein.</translation>
+        </message>
+        <message>
+            <source>Rename Album</source>
+            <translation>Album umbenennen</translation>
+        </message>
+        <message>
+            <source>New album name:</source>
+            <translation>Neuer Albumname:</translation>
+        </message>
+        <message>
+            <source>Basic Library — not bound</source>
+            <translation>Basisbibliothek — nicht verbunden</translation>
+        </message>
+        <message>
+            <source>Basic Library</source>
+            <translation>Basisbibliothek</translation>
+        </message>
+        <message>
+            <source>Bind Basic Library…</source>
+            <translation>Basisbibliothek verbinden …</translation>
+        </message>
+        <message>
+            <source>All Photos</source>
+            <translation>Alle Fotos</translation>
+        </message>
+        <message>
+            <source>Videos</source>
+            <translation>Videos</translation>
+        </message>
+        <message>
+            <source>Live Photos</source>
+            <translation>Live Photos</translation>
+        </message>
+        <message>
+            <source>Favorites</source>
+            <translation>Favoriten</translation>
+        </message>
+        <message>
+            <source>People</source>
+            <translation>Personen</translation>
+        </message>
+        <message>
+            <source>Location</source>
+            <translation>Ort</translation>
+        </message>
+        <message>
+            <source>Pinned</source>
+            <translation>Angeheftet</translation>
+        </message>
+        <message>
+            <source>Albums</source>
+            <translation>Alben</translation>
+        </message>
+        <message>
+            <source>Recently Deleted</source>
+            <translation>Zuletzt gelöscht</translation>
+        </message>
+    </context>
+    <context>
+        <name>AlbumsDashboard</name>
+        <message>
+            <source>Albums</source>
+            <translation>Alben</translation>
+        </message>
+        <message>
+            <source>No albums available</source>
+            <translation>Keine Alben verfügbar</translation>
+        </message>
+        <message>
+            <source>Rename…</source>
+            <translation>Umbenennen …</translation>
+        </message>
+        <message>
+            <source>Unpin Album</source>
+            <translation>Album lösen</translation>
+        </message>
+        <message>
+            <source>Pin Album</source>
+            <translation>Album anheften</translation>
+        </message>
+        <message>
+            <source>Rename Album</source>
+            <translation>Album umbenennen</translation>
+        </message>
+        <message>
+            <source>New album name:</source>
+            <translation>Neuer Albumname:</translation>
+        </message>
+        <message>
+            <source>Album name cannot be empty.</source>
+            <translation>Der Albumname darf nicht leer sein.</translation>
+        </message>
+    </context>
 </TS>

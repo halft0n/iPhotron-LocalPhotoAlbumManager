@@ -10,6 +10,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="Qt widgets not available", exc_
 from PySide6.QtCore import QModelIndex
 from PySide6.QtWidgets import QApplication
 
+from iPhoto.gui.i18n import TranslationManager
 from iPhoto.gui.services.pinned_items_service import PinnedItemsService
 from iPhoto.gui.ui.models.album_tree_model import AlbumTreeModel, AlbumTreeRole, NodeType
 from iPhoto.library.runtime_controller import LibraryRuntimeController
@@ -46,6 +47,12 @@ def _find_child(model: AlbumTreeModel, parent_index, title: str):
     return None
 
 
+def _settings(tmp_path: Path) -> SettingsManager:
+    manager = SettingsManager(path=tmp_path / "settings.json")
+    manager.load()
+    return manager
+
+
 def test_placeholder_when_unbound(qapp: QApplication) -> None:
     manager = LibraryRuntimeController()
     model = AlbumTreeModel(manager)
@@ -54,6 +61,36 @@ def test_placeholder_when_unbound(qapp: QApplication) -> None:
     index = model.index(0, 0)
     assert model.data(index) == "Bind Basic Library…"
     assert model.data(index, AlbumTreeRole.NODE_TYPE) == NodeType.ACTION
+
+
+def test_model_translates_static_display_text_without_changing_keys(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    root = tmp_path / "Library"
+    root.mkdir()
+    manager = LibraryRuntimeController()
+    manager.bind_path(root)
+    qapp.processEvents()
+
+    translations = TranslationManager(_settings(tmp_path))
+    translations.apply_language("zh-CN")
+    model = AlbumTreeModel(manager)
+    qapp.processEvents()
+
+    header_index = model.index(0, 0)
+    header_item = model.item_from_index(header_index)
+    assert header_item is not None
+    assert header_item.title == "Basic Library"
+    assert model.data(header_index) == "基础图库"
+
+    people_index = _find_child(model, header_index, "人物")
+    assert people_index is not None
+    people_item = model.item_from_index(people_index)
+    assert people_item is not None
+    assert people_item.title == "People"
+
+    translations._remove_installed_translator(qapp)
 
 
 def test_model_populates_albums(tmp_path: Path, qapp: QApplication) -> None:
