@@ -436,4 +436,115 @@
             <translation>{operation} wird durch erneutes Scannen abgeschlossen …</translation>
         </message>
     </context>
+    <context>
+        <name>InfoPanel</name>
+        <message>
+            <source>Delete</source>
+            <translation>Löschen</translation>
+        </message>
+        <message>
+            <source>Choose Someone Else…</source>
+            <translation>Andere Person auswählen …</translation>
+        </message>
+        <message>
+            <source>New Person…</source>
+            <translation>Neue Person …</translation>
+        </message>
+        <message>
+            <source>Not {name}</source>
+            <translation>Nicht {name}</translation>
+        </message>
+        <message>
+            <source>Not This Person</source>
+            <translation>Nicht diese Person</translation>
+        </message>
+        <message>
+            <source>Choose Someone Else</source>
+            <translation>Andere Person auswählen</translation>
+        </message>
+        <message>
+            <source>Assign this face to</source>
+            <translation>Dieses Gesicht zuweisen zu</translation>
+        </message>
+        <message>
+            <source>Choose</source>
+            <translation>Auswählen</translation>
+        </message>
+        <message>
+            <source>New Person</source>
+            <translation>Neue Person</translation>
+        </message>
+        <message>
+            <source>Person name:</source>
+            <translation>Name der Person:</translation>
+        </message>
+        <message>
+            <source>Unnamed</source>
+            <translation>Unbenannt</translation>
+        </message>
+        <message>
+            <source>{name} ({count})</source>
+            <translation>{name} ({count})</translation>
+        </message>
+        <message>
+            <source>ISO {value}</source>
+            <translation>ISO {value}</translation>
+        </message>
+        <message>
+            <source>{value} EV</source>
+            <translation>{value} EV</translation>
+        </message>
+        <message>
+            <source>{value} fps</source>
+            <translation>{value} fps</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>Info</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>Schließen</translation>
+        </message>
+        <message>
+            <source>Download Map Extension</source>
+            <translation>Kartenerweiterung herunterladen</translation>
+        </message>
+        <message>
+            <source>No metadata available for this item.</source>
+            <translation>Für dieses Element sind keine Metadaten verfügbar.</translation>
+        </message>
+        <message>
+            <source>Loading detailed video information...</source>
+            <translation>Detaillierte Videoinformationen werden geladen …</translation>
+        </message>
+        <message>
+            <source>Loading detailed exposure information...</source>
+            <translation>Detaillierte Belichtungsinformationen werden geladen …</translation>
+        </message>
+        <message>
+            <source>Detailed video information is unavailable.</source>
+            <translation>Detaillierte Videoinformationen sind nicht verfügbar.</translation>
+        </message>
+        <message>
+            <source>Detailed exposure information is unavailable.</source>
+            <translation>Detaillierte Belichtungsinformationen sind nicht verfügbar.</translation>
+        </message>
+        <message>
+            <source>Assign a Location</source>
+            <translation>Ort zuweisen</translation>
+        </message>
+        <message>
+            <source>Confirm</source>
+            <translation>Bestätigen</translation>
+        </message>
+        <message>
+            <source>Assigning...</source>
+            <translation>Wird zugewiesen …</translation>
+        </message>
+        <message>
+            <source>Install the map extension to use Assign a Location.</source>
+            <translation>Installieren Sie die Kartenerweiterung, um Orte zuzuweisen.</translation>
+        </message>
+    </context>
 </TS>

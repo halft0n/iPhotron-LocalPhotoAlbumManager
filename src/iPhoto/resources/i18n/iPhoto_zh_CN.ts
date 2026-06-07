@@ -436,4 +436,115 @@
             <translation>正在通过重新扫描完成{operation}…</translation>
         </message>
     </context>
+    <context>
+        <name>InfoPanel</name>
+        <message>
+            <source>Delete</source>
+            <translation>删除</translation>
+        </message>
+        <message>
+            <source>Choose Someone Else…</source>
+            <translation>选择其他人…</translation>
+        </message>
+        <message>
+            <source>New Person…</source>
+            <translation>新建人物…</translation>
+        </message>
+        <message>
+            <source>Not {name}</source>
+            <translation>不是 {name}</translation>
+        </message>
+        <message>
+            <source>Not This Person</source>
+            <translation>不是此人物</translation>
+        </message>
+        <message>
+            <source>Choose Someone Else</source>
+            <translation>选择其他人</translation>
+        </message>
+        <message>
+            <source>Assign this face to</source>
+            <translation>将此面孔分配给</translation>
+        </message>
+        <message>
+            <source>Choose</source>
+            <translation>选择</translation>
+        </message>
+        <message>
+            <source>New Person</source>
+            <translation>新建人物</translation>
+        </message>
+        <message>
+            <source>Person name:</source>
+            <translation>人物姓名：</translation>
+        </message>
+        <message>
+            <source>Unnamed</source>
+            <translation>未命名</translation>
+        </message>
+        <message>
+            <source>{name} ({count})</source>
+            <translation>{name}（{count}）</translation>
+        </message>
+        <message>
+            <source>ISO {value}</source>
+            <translation>ISO {value}</translation>
+        </message>
+        <message>
+            <source>{value} EV</source>
+            <translation>{value} EV</translation>
+        </message>
+        <message>
+            <source>{value} fps</source>
+            <translation>{value} fps</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>信息</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>关闭</translation>
+        </message>
+        <message>
+            <source>Download Map Extension</source>
+            <translation>下载地图扩展</translation>
+        </message>
+        <message>
+            <source>No metadata available for this item.</source>
+            <translation>此项目没有可用的元数据。</translation>
+        </message>
+        <message>
+            <source>Loading detailed video information...</source>
+            <translation>正在加载详细视频信息…</translation>
+        </message>
+        <message>
+            <source>Loading detailed exposure information...</source>
+            <translation>正在加载详细曝光信息…</translation>
+        </message>
+        <message>
+            <source>Detailed video information is unavailable.</source>
+            <translation>详细视频信息不可用。</translation>
+        </message>
+        <message>
+            <source>Detailed exposure information is unavailable.</source>
+            <translation>详细曝光信息不可用。</translation>
+        </message>
+        <message>
+            <source>Assign a Location</source>
+            <translation>分配位置</translation>
+        </message>
+        <message>
+            <source>Confirm</source>
+            <translation>确认</translation>
+        </message>
+        <message>
+            <source>Assigning...</source>
+            <translation>正在分配…</translation>
+        </message>
+        <message>
+            <source>Install the map extension to use Assign a Location.</source>
+            <translation>安装地图扩展以使用位置分配。</translation>
+        </message>
+    </context>
 </TS>

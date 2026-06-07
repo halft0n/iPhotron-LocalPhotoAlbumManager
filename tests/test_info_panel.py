@@ -16,6 +16,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QSize, Qt,
 from PySide6.QtGui import QMouseEvent, QPainter, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QWidget
 
+from iPhoto.gui.i18n import formatters
 from iPhoto.gui.ui.widgets.info_panel import (
     InfoPanel,
     _FACE_ADD_BUTTON_SIZE,
@@ -577,7 +578,18 @@ def test_info_panel_face_avatar_context_menu_labels_and_submenu(qapp: QApplicati
     delete_label, not_this_label, submenu_labels = avatar._menu_action_labels()
     assert delete_label == "Delete"
     assert not_this_label == "Not Alice"
-    assert submenu_labels == ("Choose Someone Else…", "New Person…")
+    assert submenu_labels == (
+        ("choose_someone_else", "Choose Someone Else…"),
+        ("new_person", "New Person…"),
+    )
+    menu = avatar._build_context_menu()
+    assert menu is not None
+    submenu = menu.actions()[1].menu()
+    assert submenu is not None
+    assert [action.data() for action in submenu.actions()] == [
+        "choose_someone_else",
+        "new_person",
+    ]
     panel.close()
 
 
@@ -1697,6 +1709,57 @@ def test_info_panel_location_map_drag_cursor_uses_global_map_host_filter(
         panel.shutdown()
         panel.close()
         _clear_override_cursors()
+
+
+def test_info_panel_formatter_locale_controls_numbers(qapp: QApplication) -> None:
+    del qapp
+    panel = None
+    try:
+        formatters.set_current_locale("de_DE")
+        panel = InfoPanel()
+        panel.set_asset_metadata(
+            {
+                "rel": "clip.MOV",
+                "name": "clip.MOV",
+                "is_video": True,
+                "bytes": 24_192_000,
+                "frame_rate": 59.94,
+            }
+        )
+
+        assert "23,1 MB" in panel._summary_label.text()
+        assert "59,94 fps" in panel._exposure_label.text()
+    finally:
+        formatters.set_current_locale("en_US")
+        if panel is not None:
+            panel.close()
+
+
+def test_info_panel_retranslate_refreshes_static_text_and_metadata(qapp: QApplication) -> None:
+    del qapp
+    panel = InfoPanel()
+    try:
+        panel.set_asset_metadata(
+            {
+                "rel": "clip.MOV",
+                "name": "clip.MOV",
+                "is_video": True,
+                "_metadata_loading": True,
+            }
+        )
+        panel.set_location_capability(enabled=False)
+
+        assert panel._title_label.text() == "Info"
+        assert panel._location_download_button.text() == "Download Map Extension"
+        assert panel._exposure_label.text() == "Loading detailed video information..."
+
+        panel.retranslate_ui()
+
+        assert panel._title_label.text() == "Info"
+        assert panel._location_download_button.text() == "Download Map Extension"
+        assert panel._exposure_label.text() == "Loading detailed video information..."
+    finally:
+        panel.close()
 
 
 def test_info_panel_location_map_uses_post_render_pin_when_available(

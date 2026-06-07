@@ -96,6 +96,7 @@ def populate_menu(
             menu.addSeparator()
         if spec.children:
             submenu = menu.addMenu(spec.label)
+            submenu.menuAction().setData(spec.action_id)
             apply_menu_style(submenu, anchor)
             child_count = populate_menu(
                 submenu,
@@ -109,6 +110,7 @@ def populate_menu(
                 visible_count += 1
             continue
         action = menu.addAction(spec.label)
+        action.setData(spec.action_id)
         action.setEnabled(spec.is_enabled(context))
         if spec.on_trigger is not None:
             action.triggered.connect(lambda _checked=False, handler=spec.on_trigger: handler(context))

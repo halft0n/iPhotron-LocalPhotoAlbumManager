@@ -11,6 +11,7 @@ from typing import Any
 from PySide6.QtCore import QCoreApplication, QLocale, QObject, QTranslator, Signal
 
 from ...settings import SettingsManager
+from . import formatters
 from .language import LanguageInfo
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class TranslationManager(QObject):
         if app is None:
             self._current_language = requested
             self._effective_language = effective
+            self._apply_formatter_locale(effective)
             return
 
         self._remove_installed_translator(app)
@@ -90,6 +92,8 @@ class TranslationManager(QObject):
                     )
             if not loaded:
                 effective = _DEFAULT_LANGUAGE
+
+        self._apply_formatter_locale(effective)
 
         changed = requested != self._current_language or effective != self._effective_language
         self._current_language = requested
@@ -136,6 +140,10 @@ class TranslationManager(QObject):
         if locale_name in {"zh_CN", "zh_Hans_CN"} or locale_name.startswith("zh_Hans"):
             return "zh-CN"
         return _DEFAULT_LANGUAGE
+
+    def _apply_formatter_locale(self, effective: str) -> None:
+        info = self._available.get(effective)
+        formatters.set_current_locale(info.qt_locale if info is not None else None)
 
     def _load_languages(self) -> dict[str, LanguageInfo]:
         try:

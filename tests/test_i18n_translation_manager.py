@@ -17,6 +17,7 @@ from iPhoto.gui.i18n import TranslationManager
 from iPhoto.gui.i18n.language import LanguageInfo
 from iPhoto.gui.ui.main_window import MainWindow
 from iPhoto.gui.ui.widgets.main_header import MainHeaderWidget
+from iPhoto.gui.ui.widgets.info_panel import InfoPanel
 from iPhoto.settings.manager import SettingsManager
 from iPhoto.settings.schema import merge_with_defaults, validate_settings
 
@@ -67,6 +68,19 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
     assert translations.effective_language() == "zh-CN"
     assert spy.count() >= 1
     assert QCoreApplication.translate("MainHeader", "Language", None) == "语言"
+    assert QCoreApplication.translate("InfoPanel", "Download Map Extension", None) == "下载地图扩展"
+
+    panel = InfoPanel()
+    try:
+        panel.set_location_capability(enabled=False)
+        panel.set_asset_metadata({"rel": "photo.jpg", "name": "photo.jpg"})
+        panel.retranslate_ui()
+
+        assert panel._title_label.text() == "信息"
+        assert panel._location_download_button.text() == "下载地图扩展"
+        assert panel._location_editor.placeholderText() == "分配位置"
+    finally:
+        panel.close()
 
 
 def test_translation_manager_falls_back_when_qm_is_missing(
