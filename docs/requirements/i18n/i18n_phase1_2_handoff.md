@@ -1,7 +1,7 @@
 # iPhotron 国际化阶段 1-2 交接文档
 
 > 日期：2026-06-07  
-> 状态：阶段 1-2 已实现，待后续阶段继续迁移业务页面  
+> 状态：阶段 1-2 已实现；Python-aware 提取工具已补齐；待后续阶段继续迁移业务页面  
 > 对应指南：`docs/requirements/i18n/i18n_multilingual_architecture_guide.md`
 
 ---
@@ -54,16 +54,27 @@
 
 ## 2. 工具链与验证
 
-新增脚本：
+新增/更新工具：
 
 - `scripts/i18n_compile.sh`
   - 调用 `pyside6-lrelease`。
   - 从 `.ts` 生成 `.qm`。
+- `tools/extract_i18n_strings.py`
+  - 使用 Python `ast` 扫描源码中的翻译调用。
+  - 识别 `QCoreApplication.translate(context, text, ...)`。
+  - 识别项目封装 `tr(context, text, ...)`。
+  - 识别局部别名，例如 `tr = QCoreApplication.translate` 后的 `tr(...)`。
+  - 只提取字面量 context/source text，跳过动态 context、动态文案和 f-string，避免误提取用户数据。
+  - 合并到现有 `.ts` 时保留已有译文，不覆盖已完成翻译。
+  - 新增未翻译 message 会标记为 `type="unfinished"`。
+  - 支持基础 translator comment/disambiguation 和 `%n` plural metadata。
 - `scripts/i18n_extract.sh`
-  - 当前保留为提取入口，但本机 `pyside6-lupdate` 对 Python/PySide 源码未能提取任何 message。
+  - 已改为调用 `tools/extract_i18n_strings.py`，不再依赖当前不可用的 `pyside6-lupdate` Python 提取路径。
+  - 当前扫描 `src/iPhoto/gui` 和 `src/maps`。
+  - 更新 `src/iPhoto/resources/i18n/iPhoto_de.ts` 和 `src/iPhoto/resources/i18n/iPhoto_zh_CN.ts`。
   - 脚本已加保护：如果提取结果不包含 `<message>`，会恢复原 `.ts` 并退出失败，避免误清空已有翻译。
 
-本轮已执行验证：
+阶段 1-2 原始验证：
 
 ```bash
 pytest tests/test_i18n_translation_manager.py \
@@ -80,6 +91,32 @@ pytest tests/test_i18n_translation_manager.py \
 46 passed
 ```
 
+本轮提取工具补齐后执行验证：
+
+```bash
+pytest tests/test_i18n_extract_tool.py -q
+```
+
+结果：
+
+```text
+8 passed
+```
+
+工具链提取验证：
+
+```bash
+bash scripts/i18n_extract.sh
+```
+
+结果：
+
+```text
+Extracted 105 translation messages.
+```
+
+说明：105 是当前源码中已包裹翻译调用去重后的可提取 message 数；当前 `iPhoto_de.ts` 和 `iPhoto_zh_CN.ts` 各包含 105 条 message，0 条 unfinished。
+
 翻译编译验证：
 
 ```bash
@@ -89,14 +126,15 @@ bash scripts/i18n_compile.sh
 结果：
 
 ```text
-iPhoto_de.qm: 105 translations
-iPhoto_zh_CN.qm: 105 translations
+Generated 105 translation(s) (105 finished and 0 unfinished)
+Generated 105 translation(s) (105 finished and 0 unfinished)
 ```
 
 静态检查：
 
 ```bash
 python -m ruff check src/iPhoto/gui/i18n
+python -m ruff check tools/extract_i18n_strings.py
 ```
 
 结果：
@@ -106,6 +144,21 @@ All checks passed
 ```
 
 说明：全仓库级 `ruff check` 仍会命中历史规则噪声，例如测试中的 `assert`、Qt mixedCase 方法名、旧类型注解风格等。本轮只保证新增 i18n 包和相关测试通过目标验证。
+
+本轮还执行了目标回归：
+
+```bash
+pytest tests/test_i18n_translation_manager.py \
+  tests/test_settings_manager.py \
+  tests/application/test_runtime_context.py \
+  tests/architecture/test_layer_boundaries.py -q
+```
+
+结果：
+
+```text
+35 passed
+```
 
 ---
 
@@ -121,7 +174,8 @@ All checks passed
 - `src/maps/main.py` 独立地图预览入口未迁移。
 - `tools/check_i18n_strings.py` 硬编码文案门禁尚未实现。
 - locale-aware 数字、日期、文件大小格式化 helper 尚未实现。
-- `pyside6-lupdate` 当前无法可靠提取 Python 文案，`.ts` 目前为手工维护。后续需要补 Python-aware 提取器或自定义 AST 提取脚本。
+- `tools/extract_i18n_strings.py` 只提取已经包裹的翻译调用；未包裹硬编码文案仍需要页面迁移和后续门禁识别。
+- 当前提取器故意跳过动态 context/source text。后续迁移时应把用户可见文案改成稳定字面量加 `.format(...)` 占位符，而不是动态拼接。
 
 运行时注意点：
 
@@ -135,17 +189,7 @@ All checks passed
 
 建议按架构指南继续推进阶段 3-5。
 
-优先级 1：补齐提取工具
-
-- 新增 Python-aware 提取工具，例如 `tools/extract_i18n_strings.py`。
-- 最低要求：
-  - 识别 `QCoreApplication.translate(context, text, ...)`。
-  - 识别项目封装 `tr(context, text, ...)`。
-  - 保留已有译文，不覆盖已完成翻译。
-  - 输出或更新 `iPhoto_de.ts`、`iPhoto_zh_CN.ts`。
-- 之后再让 `scripts/i18n_extract.sh` 调用该工具，避免继续依赖当前不可用的 Python 提取能力。
-
-优先级 2：迁移主要业务页面
+优先级 1：迁移主要业务页面
 
 建议按用户可见度排序：
 
@@ -162,14 +206,15 @@ All checks passed
 - 为长期存在的 widget 增加 `retranslate_ui()`。
 - 避免拼接自然语言句子，动态值使用 `{name}`、`{count}` 等占位符。
 - 不翻译文件名、路径、相册名、人物名、EXIF 原始值和内部诊断。
+- 每完成一个页面后运行 `bash scripts/i18n_extract.sh`，补齐 `.ts` 中新增 message，再运行 `bash scripts/i18n_compile.sh`。
 
-优先级 3：地图独立入口
+优先级 2：地图独立入口
 
 - 迁移 `src/maps/main.py` 的菜单、对话框、状态栏和窗口标题。
 - 初期可以继续使用同一 `iPhoto_*.qm`。
 - 如果后续 maps 文案明显膨胀，再拆分 `maps_*.ts/.qm`。
 
-优先级 4：格式化 helper
+优先级 3：格式化 helper
 
 新增 `src/iPhoto/gui/i18n/formatters.py`：
 
@@ -177,7 +222,7 @@ All checks passed
 - 统一格式化数字、日期时间、百分比、文件大小。
 - 避免 widget 直接调用 `QLocale.system()`，因为用户可能手动选择非系统语言。
 
-优先级 5：硬编码门禁
+优先级 4：硬编码门禁
 
 新增 `tools/check_i18n_strings.py` 并接入架构测试：
 
@@ -207,7 +252,15 @@ pytest tests/test_i18n_translation_manager.py \
   tests/application/test_runtime_context.py \
   tests/architecture/test_layer_boundaries.py -q
 
+bash scripts/i18n_extract.sh
 bash scripts/i18n_compile.sh
+```
+
+如果只接手提取工具链，可先执行：
+
+```bash
+pytest tests/test_i18n_extract_tool.py -q
+python -m ruff check tools/extract_i18n_strings.py
 ```
 
 手动验收建议：
