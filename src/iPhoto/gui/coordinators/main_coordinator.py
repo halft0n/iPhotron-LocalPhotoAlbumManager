@@ -104,7 +104,9 @@ class MainCoordinator(QObject):
         bound_people_service = self._people_service(library_root=lib_root)
         self._playback_people_service = bound_people_service or PeopleService()
         if hasattr(window.ui, "people_page"):
-            if bound_people_service is not None and hasattr(window.ui.people_page, "set_people_service"):
+            if bound_people_service is not None and hasattr(
+                window.ui.people_page, "set_people_service"
+            ):
                 window.ui.people_page.set_people_service(self._playback_people_service)
             else:
                 window.ui.people_page.set_library_root(lib_root)
@@ -227,9 +229,7 @@ class MainCoordinator(QObject):
             )
         if hasattr(window.ui, "map_view"):
             window.ui.map_view.set_map_runtime(self._map_runtime())
-            window.ui.map_view.set_map_interaction_service(
-                self._map_interaction_service()
-            )
+            window.ui.map_view.set_map_interaction_service(self._map_interaction_service())
 
         # 4. Theme Controller
         self._theme_controller = WindowThemeController(window.ui, window, context.theme)
@@ -443,7 +443,9 @@ class MainCoordinator(QObject):
         # Library watcher rescans still emit through the bound LibraryRuntimeController,
         # while facade-initiated rescans emit through LibraryUpdateService.
         self._context.library.scanBatchCommitted.connect(self._asset_list_vm.handle_scan_batch)
-        self._context.library.scanBatchCommitted.connect(self._gallery_vm.handle_location_scan_batch)
+        self._context.library.scanBatchCommitted.connect(
+            self._gallery_vm.handle_location_scan_batch
+        )
         self._context.library.scanFinished.connect(self._gallery_store.handle_scan_finished)
         self._context.library.scanFinished.connect(self._gallery_vm.handle_location_scan_finished)
         updates.scanBatchCommitted.connect(self._asset_list_vm.handle_scan_batch)
@@ -556,9 +558,7 @@ class MainCoordinator(QObject):
         move_service.moveFinished.connect(self._status_bar.handle_move_finished)
         move_service.moveFinished.connect(self._handle_move_finished_toast)
         move_service.moveFinished.connect(self._handle_move_finished_pending_cleanup)
-        move_service.moveCompletedDetailed.connect(
-            self._handle_move_completed_pending_cleanup
-        )
+        move_service.moveCompletedDetailed.connect(self._handle_move_completed_pending_cleanup)
 
         # Error Reporting
         self._facade.errorRaised.connect(self._dialog.show_error)
@@ -576,6 +576,11 @@ class MainCoordinator(QObject):
             ui.theme_dark.setChecked(True)
         else:
             ui.theme_system.setChecked(True)
+
+        # Language Switching
+        ui.language_group.triggered.connect(self._handle_language_action_triggered)
+        self._context.settings.settingsChanged.connect(self._handle_settings_changed)
+        self._sync_language_actions()
 
         # Note: keyboard shortcuts are now managed centrally by
         # AppShortcutManager, which is created in __init__ after all
@@ -607,9 +612,7 @@ class MainCoordinator(QObject):
             people_page.set_status_message(self._context.library.face_scan_status_message())
         map_runtime = self._map_runtime()
         map_interaction_service = self._map_interaction_service()
-        self._map_extension_download.set_package_root(
-            self._resolve_map_package_root(map_runtime)
-        )
+        self._map_extension_download.set_package_root(self._resolve_map_package_root(map_runtime))
         if ui is not None and hasattr(ui, "map_view"):
             ui.map_view.set_map_runtime(map_runtime)
             ui.map_view.set_map_interaction_service(map_interaction_service)
@@ -700,10 +703,7 @@ class MainCoordinator(QObject):
 
     def _handle_people_snapshot_sidebar_refresh(self, event: object) -> None:
         library_root = self._context.library.root()
-        if (
-            library_root is not None
-            and getattr(event, "library_root", None) == library_root
-        ):
+        if library_root is not None and getattr(event, "library_root", None) == library_root:
             self._pinned_items_service.prune_missing_people_entities(
                 library_root,
                 person_ids=tuple(getattr(event, "changed_person_ids", ()) or ()),
@@ -992,6 +992,23 @@ class MainCoordinator(QObject):
             self._context.settings.set("ui.wheel_action", selected)
 
         ui.image_viewer.set_wheel_action(selected)
+
+    def _handle_language_action_triggered(self, action: QAction) -> None:
+        language = action.data()
+        if not isinstance(language, str):
+            return
+        if self._context.settings.get("ui.language", "system") != language:
+            self._context.settings.set("ui.language", language)
+
+    def _handle_settings_changed(self, key: str, value: object) -> None:
+        if key == "ui.language":
+            self._sync_language_actions(str(value or "system"))
+
+    def _sync_language_actions(self, language: str | None = None) -> None:
+        ui = self._window.ui
+        selected = language or str(self._context.settings.get("ui.language", "system") or "system")
+        for action in ui.language_group.actions():
+            action.setChecked(action.data() == selected)
 
     def _handle_face_name_toggle_changed(self, checked: bool) -> None:
         if self._context.settings.get("ui.show_face_names_in_detail") != checked:

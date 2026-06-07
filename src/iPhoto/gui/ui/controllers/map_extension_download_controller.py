@@ -44,7 +44,6 @@ class _MapExtensionProgressDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Map Extension")
         self.setModal(True)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setMinimumWidth(420)
@@ -54,7 +53,7 @@ class _MapExtensionProgressDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        self._message_label = QLabel("Preparing map extension download...", self)
+        self._message_label = QLabel(self._tr("Preparing map extension download..."), self)
         self._message_label.setWordWrap(True)
         layout.addWidget(self._message_label)
 
@@ -68,6 +67,7 @@ class _MapExtensionProgressDialog(QDialog):
         self._status_label = QLabel("", self)
         footer.addWidget(self._status_label)
         layout.addLayout(footer)
+        self.retranslate_ui()
 
     def update_progress(self, current: int, total: int, message: str) -> None:
         self._message_label.setText(message)
@@ -82,6 +82,12 @@ class _MapExtensionProgressDialog(QDialog):
 
     def allow_close(self) -> None:
         self._allow_close = True
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(self._tr("Map Extension"))
+
+    def _tr(self, source_text: str) -> str:
+        return QCoreApplication.translate("MapExtension", source_text, None)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if not self._allow_close:
@@ -109,6 +115,9 @@ class MapExtensionDownloadController:
         self._active_worker: MapExtensionDownloadWorker | None = None
         self._temporarily_hidden_windows: list[QWidget] = []
 
+    def _tr(self, source_text: str) -> str:
+        return QCoreApplication.translate("MapExtension", source_text, None)
+
     def maybe_prompt_on_startup(self) -> None:
         if not supports_map_extension_download():
             return
@@ -122,14 +131,17 @@ class MapExtensionDownloadController:
 
         message_box = QMessageBox(self._parent)
         message_box.setIcon(QMessageBox.Icon.Question)
-        message_box.setWindowTitle("Map Extension")
-        message_box.setText("Download the offline map extension now?")
+        message_box.setWindowTitle(self._tr("Map Extension"))
+        message_box.setText(self._tr("Download the offline map extension now?"))
         message_box.setInformativeText(
-            "The map extension enables the bundled offline OsmAnd map runtime."
+            self._tr("The map extension enables the bundled offline OsmAnd map runtime.")
         )
-        download_button = message_box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
-        message_box.addButton("Not Now", QMessageBox.ButtonRole.RejectRole)
-        do_not_show_checkbox = QCheckBox("Do not show again", message_box)
+        download_button = message_box.addButton(
+            self._tr("Download"),
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        message_box.addButton(self._tr("Not Now"), QMessageBox.ButtonRole.RejectRole)
+        do_not_show_checkbox = QCheckBox(self._tr("Do not show again"), message_box)
         message_box.setCheckBox(do_not_show_checkbox)
         message_box.exec()
 
@@ -158,8 +170,8 @@ class MapExtensionDownloadController:
         if not supports_map_extension_download():
             QMessageBox.warning(
                 self._parent,
-                "Map Extension",
-                "Map extension downloads are unavailable on this platform.",
+                self._tr("Map Extension"),
+                self._tr("Map extension downloads are unavailable on this platform."),
             )
             return
 
@@ -191,16 +203,25 @@ class MapExtensionDownloadController:
     def _handle_ready(self, result: object) -> None:
         if isinstance(result, MapExtensionDownloadResult):
             self._latest_result = result
-        install_verified = verify_osmand_extension_install(self._package_root, platform=sys.platform)
+        install_verified = verify_osmand_extension_install(
+            self._package_root, platform=sys.platform
+        )
         if not install_verified:
             self._handle_error(
                 self._install_verification_failed_message(
-                    "Map extension download finished, but the install folder was not renamed successfully."
+                    self._tr(
+                        "Map extension download finished, but the install folder was not "
+                        "renamed successfully."
+                    )
                 )
             )
             return
         if self._progress_dialog is not None:
-            self._progress_dialog.update_progress(100, 100, "Map extension is installed. Restart required.")
+            self._progress_dialog.update_progress(
+                100,
+                100,
+                self._tr("Map extension is installed. Restart required."),
+            )
             self._progress_dialog.allow_close()
             self._progress_dialog.close()
             self._progress_dialog.deleteLater()
@@ -208,8 +229,8 @@ class MapExtensionDownloadController:
 
         restart_now = QMessageBox.question(
             self._parent,
-            "Restart Required",
-            "Map extension download finished. Restart now to activate it?",
+            self._tr("Restart Required"),
+            self._tr("Map extension download finished. Restart now to activate it?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
@@ -227,8 +248,8 @@ class MapExtensionDownloadController:
         self._restore_temporarily_hidden_windows()
         QMessageBox.critical(
             self._parent,
-            "Map Extension",
-            str(message) or "Failed to download the map extension.",
+            self._tr("Map Extension"),
+            str(message) or self._tr("Failed to download the map extension."),
         )
 
     def _handle_finished(self) -> None:
@@ -242,9 +263,11 @@ class MapExtensionDownloadController:
             LOGGER.warning("Failed to recover pending map extension install", exc_info=True)
             QMessageBox.critical(
                 self._parent,
-                "Map Extension",
+                self._tr("Map Extension"),
                 self._install_verification_failed_message(
-                    "A pending map extension install exists, but it could not be activated."
+                    self._tr(
+                        "A pending map extension install exists, but it could not be activated."
+                    )
                 ),
             )
             return
@@ -252,16 +275,22 @@ class MapExtensionDownloadController:
         if verify_osmand_extension_install(self._package_root, platform=sys.platform):
             QMessageBox.information(
                 self._parent,
-                "Map Extension",
-                "Map extension installation was completed. Restart the application to activate it.",
+                self._tr("Map Extension"),
+                self._tr(
+                    "Map extension installation was completed. Restart the application to "
+                    "activate it."
+                ),
             )
             return
 
         QMessageBox.critical(
             self._parent,
-            "Map Extension",
+            self._tr("Map Extension"),
             self._install_verification_failed_message(
-                "A pending map extension install was found, but the installed files could not be verified."
+                self._tr(
+                    "A pending map extension install was found, but the installed files could "
+                    "not be verified."
+                )
             ),
         )
 
@@ -270,8 +299,8 @@ class MapExtensionDownloadController:
         extension_root = default_osmand_extension_root(self._package_root)
         return (
             f"{prefix}\n\n"
-            f"Pending folder: {pending_root}\n"
-            f"Active extension folder: {extension_root}"
+            f"{self._tr('Pending folder')}: {pending_root}\n"
+            f"{self._tr('Active extension folder')}: {extension_root}"
         )
 
     def _restart_application(self) -> None:
@@ -285,8 +314,10 @@ class MapExtensionDownloadController:
             self._restore_temporarily_hidden_windows()
             QMessageBox.critical(
                 self._parent,
-                "Restart Failed",
-                "Failed to relaunch the application automatically. Please restart it manually.",
+                self._tr("Restart Failed"),
+                self._tr(
+                    "Failed to relaunch the application automatically. Please restart it manually."
+                ),
             )
             return
 

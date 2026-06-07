@@ -6,7 +6,7 @@ import sys
 from contextlib import contextmanager
 from typing import Iterable, Iterator, TYPE_CHECKING, cast
 
-from PySide6.QtCore import Property, QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, Property, QEvent, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QMouseEvent,
@@ -275,9 +275,7 @@ class FramelessWindowManager(QObject):
                 self._immersive_visibility_targets, visible=False
             )
 
-            self._video_controls_enabled_before = (
-                self._ui.video_area.controls_enabled()
-            )
+            self._video_controls_enabled_before = self._ui.video_area.controls_enabled()
             self._ui.video_area.hide_controls(animate=False)
             self._ui.splitter.setSizes([0, sum(self._splitter_sizes or [self._window.width()])])
 
@@ -286,9 +284,7 @@ class FramelessWindowManager(QObject):
         self._immersive_active = True
         self._window.showFullScreen()
         self._update_fullscreen_button_icon()
-        self._schedule_playback_resume(
-            expect_immersive=True, resume=resume_after_transition
-        )
+        self._schedule_playback_resume(expect_immersive=True, resume=resume_after_transition)
 
     def exit_fullscreen(self) -> None:
         """Restore the normal window chrome and previously visible widgets."""
@@ -324,31 +320,21 @@ class FramelessWindowManager(QObject):
                 widget.setVisible(was_visible)
             self._hidden_widget_states = []
 
-            self._ui.video_area.set_controls_enabled(
-                self._video_controls_enabled_before
-            )
-            if (
-                self._video_controls_enabled_before
-                and self._ui.video_area.isVisible()
-            ):
+            self._ui.video_area.set_controls_enabled(self._video_controls_enabled_before)
+            if self._video_controls_enabled_before and self._ui.video_area.isVisible():
                 self._ui.video_area.show_controls(animate=False)
 
         edit_controller = self._edit_controller()
-        if (
-            self._ui.view_stack.currentWidget() is self._ui.detail_page
-            and (edit_controller is None or not edit_controller.is_editing())
+        if self._ui.view_stack.currentWidget() is self._ui.detail_page and (
+            edit_controller is None or not edit_controller.is_editing()
         ):
             if self._ui.detail_chrome_container is not None:
                 self._ui.detail_chrome_container.show()
             if self._ui.toggle_filmstrip_action is not None:
-                self._ui.filmstrip_view.setVisible(
-                    self._ui.toggle_filmstrip_action.isChecked()
-                )
+                self._ui.filmstrip_view.setVisible(self._ui.toggle_filmstrip_action.isChecked())
 
         self._update_fullscreen_button_icon()
-        self._schedule_playback_resume(
-            expect_immersive=False, resume=resume_after_transition
-        )
+        self._schedule_playback_resume(expect_immersive=False, resume=resume_after_transition)
 
     def is_immersive_active(self) -> bool:
         """Return ``True`` when the window is in immersive full screen mode."""
@@ -560,9 +546,7 @@ class FramelessWindowManager(QObject):
             mouse_event = cast(QMouseEvent, event)
             if mouse_event.button() == Qt.MouseButton.LeftButton:
                 cursor_global = mouse_event.globalPosition().toPoint()
-                self._drag_offset = (
-                    cursor_global - self._window.frameGeometry().topLeft()
-                )
+                self._drag_offset = cursor_global - self._window.frameGeometry().topLeft()
 
                 # When un-snapping, restore the pre-snap size and
                 # recompute the drag offset so the cursor sits at a
@@ -571,9 +555,7 @@ class FramelessWindowManager(QObject):
                     pre = self._snap_helper.pre_snap_geometry()
                     if pre is not None:
                         cur_w = self._window.width()
-                        ratio = (
-                            self._drag_offset.x() / cur_w if cur_w else 0.5
-                        )
+                        ratio = self._drag_offset.x() / cur_w if cur_w else 0.5
                         new_x = int(pre.width() * ratio)
                         new_y = self._drag_offset.y()
                         self._drag_offset = QPoint(new_x, new_y)
@@ -640,13 +622,23 @@ class FramelessWindowManager(QObject):
     def _update_fullscreen_button_icon(self) -> None:
         if self._immersive_active:
             self._ui.fullscreen_button.setIcon(load_icon("green.restore.circle.svg"))
-            self._ui.fullscreen_button.setToolTip("Exit Full Screen")
+            self._ui.fullscreen_button.setToolTip(
+                QCoreApplication.translate("MainWindow", "Exit Full Screen", None)
+            )
         else:
             self._ui.fullscreen_button.setIcon(load_icon("green.maximum.circle.svg"))
-            self._ui.fullscreen_button.setToolTip("Enter Full Screen")
+            self._ui.fullscreen_button.setToolTip(
+                QCoreApplication.translate("MainWindow", "Enter Full Screen", None)
+            )
 
     def _update_title_bar(self) -> None:
         self._ui.window_title_label.setText(self._window.windowTitle())
+
+    def retranslate_ui(self) -> None:
+        """Refresh window-manager-owned chrome text."""
+
+        self._update_fullscreen_button_icon()
+        self._update_title_bar()
 
     def _apply_immersive_backdrop(self) -> None:
         if self._immersive_background_applied:
@@ -732,9 +724,7 @@ class FramelessWindowManager(QObject):
         border_color = self._opaque_color(palette.color(QPalette.ColorRole.Mid))
         text_color = self._opaque_color(palette.color(QPalette.ColorRole.WindowText))
         highlight_color = self._opaque_color(palette.color(QPalette.ColorRole.Highlight))
-        highlight_text_color = self._opaque_color(
-            palette.color(QPalette.ColorRole.HighlightedText)
-        )
+        highlight_text_color = self._opaque_color(palette.color(QPalette.ColorRole.HighlightedText))
         separator_color = self._opaque_color(palette.color(QPalette.ColorRole.Midlight))
 
         window_color_name = window_color.name()
@@ -836,9 +826,7 @@ class FramelessWindowManager(QObject):
             qmenu_style, menubar_style = self._build_menu_styles()
             self._ui.menu_bar.setStyleSheet(menubar_style)
             self._ui.menu_bar.setAutoFillBackground(True)
-            self._ui.menu_bar.setAttribute(
-                Qt.WidgetAttribute.WA_TranslucentBackground, False
-            )
+            self._ui.menu_bar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
             app = QApplication.instance()
             if app is not None:

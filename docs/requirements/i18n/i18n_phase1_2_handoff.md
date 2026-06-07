@@ -1,0 +1,220 @@
+# iPhotron 国际化阶段 1-2 交接文档
+
+> 日期：2026-06-07  
+> 状态：阶段 1-2 已实现，待后续阶段继续迁移业务页面  
+> 对应指南：`docs/requirements/i18n/i18n_multilingual_architecture_guide.md`
+
+---
+
+## 1. 当前完成范围
+
+本轮实施覆盖架构指南中的阶段 1「基础设施」和阶段 2「核心壳层 UI」。目标是先把国际化作为运行时服务接入应用，并让桌面主窗口的基础菜单、标题栏、核心操作和基础提示可以在运行时切换语言。
+
+已完成内容：
+
+- 新增 `src/iPhoto/gui/i18n/`：
+  - `language.py`：定义 `LanguageInfo`。
+  - `translation_manager.py`：负责读取语言元数据、解析系统语言、加载/卸载 `QTranslator`、监听 `ui.language` 设置变化并发出 `languageChanged`。
+  - `__init__.py`：导出 `TranslationManager`、`LanguageInfo` 和 `tr()`。
+- 新增包内翻译资源目录 `src/iPhoto/resources/i18n/`：
+  - `languages.json`
+  - `iPhoto_de.ts`
+  - `iPhoto_de.qm`
+  - `iPhoto_zh_CN.ts`
+  - `iPhoto_zh_CN.qm`
+- 扩展 settings：
+  - `DEFAULT_SETTINGS["ui"]["language"] = "system"`
+  - schema 允许 `system`、`de`、`zh-CN`
+  - 旧 settings 文件可继续通过 `merge_with_defaults()` 自动补齐。
+- `RuntimeContext` 已持有 `translation`，创建顺序为：
+  - settings
+  - translation
+  - theme
+  - 其他运行时服务
+- `RuntimeEntryContract` 和 legacy `AppContext` 已补充 `translation`。
+- `pyproject.toml` package data 已包含 `.ts` 和 `.qm`。
+- 主窗口新增语言菜单：
+  - `Settings > Language > System`
+  - `Settings > Language > Deutsch`
+  - `Settings > Language > 简体中文`
+- `MainCoordinator` 已将语言 action 写入 `settings.set("ui.language", code)`，由 `TranslationManager` 监听设置变更并应用翻译。
+- `MainWindow` 新增 `retranslate_ui_tree()`，并在语言变化后通过 `QTimer.singleShot(0, ...)` 延迟刷新，避免用户从菜单切换语言时 Qt 正在关闭 popup menu 导致 `QMenu` 底层对象失效。
+- `MainHeaderWidget` 已显式创建并持有 `QMenu`，避免 PySide ownership 导致语言切换时访问已删除的菜单对象。
+- 已迁移的核心 UI 文案包括：
+  - 主菜单和设置子菜单。
+  - 语言、外观、导出、滚轮、分享相关菜单项。
+  - 主窗口标题栏按钮 tooltip。
+  - 选择/取消选择按钮。
+  - edit 顶部基础 action 文案。
+  - 基础目录选择、绑定基础图库、恢复失败确认等对话框文案。
+  - 地图扩展下载提示、进度、错误和重启提示。
+  - 状态栏扫描、加载、导入、移动/删除/恢复等核心进度提示。
+
+---
+
+## 2. 工具链与验证
+
+新增脚本：
+
+- `scripts/i18n_compile.sh`
+  - 调用 `pyside6-lrelease`。
+  - 从 `.ts` 生成 `.qm`。
+- `scripts/i18n_extract.sh`
+  - 当前保留为提取入口，但本机 `pyside6-lupdate` 对 Python/PySide 源码未能提取任何 message。
+  - 脚本已加保护：如果提取结果不包含 `<message>`，会恢复原 `.ts` 并退出失败，避免误清空已有翻译。
+
+本轮已执行验证：
+
+```bash
+pytest tests/test_i18n_translation_manager.py \
+  tests/test_settings_manager.py \
+  tests/application/test_appctx_runtime_context.py \
+  tests/gui/test_main.py \
+  tests/application/test_runtime_context.py \
+  tests/architecture/test_layer_boundaries.py -q
+```
+
+结果：
+
+```text
+46 passed
+```
+
+翻译编译验证：
+
+```bash
+bash scripts/i18n_compile.sh
+```
+
+结果：
+
+```text
+iPhoto_de.qm: 105 translations
+iPhoto_zh_CN.qm: 105 translations
+```
+
+静态检查：
+
+```bash
+python -m ruff check src/iPhoto/gui/i18n
+```
+
+结果：
+
+```text
+All checks passed
+```
+
+说明：全仓库级 `ruff check` 仍会命中历史规则噪声，例如测试中的 `assert`、Qt mixedCase 方法名、旧类型注解风格等。本轮只保证新增 i18n 包和相关测试通过目标验证。
+
+---
+
+## 3. 已知限制
+
+当前完成的是核心壳层国际化，不是全应用文案迁移。
+
+仍未完成的主要区域：
+
+- `InfoPanel` 中大量 metadata、location、person 编辑相关文案。
+- `PeopleDashboardWidget`、people dialogs、albums dashboard、gallery context menu 等业务页面文案。
+- detail/player/edit sidebar 中仍有 tooltip、按钮、状态文案未完整迁移。
+- `src/maps/main.py` 独立地图预览入口未迁移。
+- `tools/check_i18n_strings.py` 硬编码文案门禁尚未实现。
+- locale-aware 数字、日期、文件大小格式化 helper 尚未实现。
+- `pyside6-lupdate` 当前无法可靠提取 Python 文案，`.ts` 目前为手工维护。后续需要补 Python-aware 提取器或自定义 AST 提取脚本。
+
+运行时注意点：
+
+- 语言切换依赖 `settingsChanged("ui.language")`。
+- `TranslationManager` 负责全局安装 translator。由于 Qt translator 是 application-wide 状态，测试中多个 manager 会互相替换当前 translator，这是预期行为。
+- 主窗口语言刷新已改为 deferred retranslate，后续新增同步刷新逻辑时不要直接在 menu action triggered 的调用栈中访问 popup menu 对象。
+
+---
+
+## 4. 下一步建议
+
+建议按架构指南继续推进阶段 3-5。
+
+优先级 1：补齐提取工具
+
+- 新增 Python-aware 提取工具，例如 `tools/extract_i18n_strings.py`。
+- 最低要求：
+  - 识别 `QCoreApplication.translate(context, text, ...)`。
+  - 识别项目封装 `tr(context, text, ...)`。
+  - 保留已有译文，不覆盖已完成翻译。
+  - 输出或更新 `iPhoto_de.ts`、`iPhoto_zh_CN.ts`。
+- 之后再让 `scripts/i18n_extract.sh` 调用该工具，避免继续依赖当前不可用的 Python 提取能力。
+
+优先级 2：迁移主要业务页面
+
+建议按用户可见度排序：
+
+1. `src/iPhoto/gui/ui/widgets/info_panel.py`
+2. `src/iPhoto/gui/ui/widgets/people_dashboard_widget.py`
+3. `src/iPhoto/gui/ui/widgets/people_dashboard_dialogs.py`
+4. `src/iPhoto/gui/ui/widgets/albums_dashboard.py`
+5. gallery/detail/player/edit sidebar 相关 widgets 和 controllers
+6. context menu registry：`src/iPhoto/gui/ui/menus/*`
+
+每个 widget/controller 迁移时需要同步完成：
+
+- 将用户可见文案改为 `QCoreApplication.translate()` 或 `tr()`。
+- 为长期存在的 widget 增加 `retranslate_ui()`。
+- 避免拼接自然语言句子，动态值使用 `{name}`、`{count}` 等占位符。
+- 不翻译文件名、路径、相册名、人物名、EXIF 原始值和内部诊断。
+
+优先级 3：地图独立入口
+
+- 迁移 `src/maps/main.py` 的菜单、对话框、状态栏和窗口标题。
+- 初期可以继续使用同一 `iPhoto_*.qm`。
+- 如果后续 maps 文案明显膨胀，再拆分 `maps_*.ts/.qm`。
+
+优先级 4：格式化 helper
+
+新增 `src/iPhoto/gui/i18n/formatters.py`：
+
+- 使用当前有效语言对应的 `QLocale`。
+- 统一格式化数字、日期时间、百分比、文件大小。
+- 避免 widget 直接调用 `QLocale.system()`，因为用户可能手动选择非系统语言。
+
+优先级 5：硬编码门禁
+
+新增 `tools/check_i18n_strings.py` 并接入架构测试：
+
+- 扫描 GUI 层高风险 API：
+  - `QAction(...)`
+  - `addMenu(...)`
+  - `setText(...)`
+  - `setToolTip(...)`
+  - `setPlaceholderText(...)`
+  - `setWindowTitle(...)`
+  - `QMessageBox.*(...)`
+  - `showMessage(...)`
+- 允许历史 allowlist，但新增 UI 文案不应进入 allowlist。
+- 明确排除 objectName、CSS、icon filename、enum、logger、test fixture。
+
+---
+
+## 5. 交接检查清单
+
+后续接手者开始新阶段前建议先执行：
+
+```bash
+pytest tests/test_i18n_translation_manager.py \
+  tests/test_settings_manager.py \
+  tests/application/test_appctx_runtime_context.py \
+  tests/gui/test_main.py \
+  tests/application/test_runtime_context.py \
+  tests/architecture/test_layer_boundaries.py -q
+
+bash scripts/i18n_compile.sh
+```
+
+手动验收建议：
+
+- 启动 GUI。
+- 打开 `Settings > Language`。
+- 切换到 `简体中文`，确认菜单、核心按钮和标题栏 tooltip 刷新且不崩溃。
+- 切换到 `Deutsch`，确认同样即时刷新。
+- 切回 `System`，确认设置持久化且应用不崩溃。
+- 在切换语言后打开基础图库绑定、地图扩展入口、扫描/加载流程，检查核心提示文案。

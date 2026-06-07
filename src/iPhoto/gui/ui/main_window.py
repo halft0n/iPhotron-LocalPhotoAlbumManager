@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QCloseEvent, QResizeEvent
-from PySide6.QtWidgets import QMainWindow, QMenuBar
+from PySide6.QtWidgets import QMainWindow, QMenuBar, QWidget
 
 from ...application.contracts.runtime_entry_contract import RuntimeEntryContract
 
@@ -32,6 +32,10 @@ class MainWindow(QMainWindow):
         self.window_manager: FramelessWindowManager | None = None
 
         self.ui.setupUi(self, context.library)
+        translation = getattr(context, "translation", None)
+        language_changed = getattr(translation, "languageChanged", None)
+        if language_changed is not None:
+            language_changed.connect(self._schedule_retranslate_ui_tree)
 
         # ``FramelessWindowManager`` is responsible for every custom chrome
         # behaviour.  The main window therefore remains a thin container that
@@ -45,6 +49,25 @@ class MainWindow(QMainWindow):
         # so global shortcuts continue to function when no child widget is
         # active.
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+
+    def retranslate_ui_tree(self) -> None:
+        """Refresh this window and child widgets after translator changes."""
+
+        self.ui.retranslateUi(self)
+        handled_widgets = {getattr(self.ui, "main_header", None)}
+        for child in self.findChildren(QWidget):
+            if child in handled_widgets:
+                continue
+            method = getattr(child, "retranslate_ui", None)
+            if callable(method):
+                method()
+        if self.window_manager is not None:
+            self.window_manager.retranslate_ui()
+
+    def _schedule_retranslate_ui_tree(self) -> None:
+        """Refresh after active popup menus finish processing the trigger."""
+
+        QTimer.singleShot(0, self.retranslate_ui_tree)
 
     def set_coordinator(self, coordinator):
         """Inject the MainCoordinator."""
@@ -161,4 +184,3 @@ class MainWindow(QMainWindow):
                     return self.coordinator.paths_from_indexes(indexes)
 
         return []
-
