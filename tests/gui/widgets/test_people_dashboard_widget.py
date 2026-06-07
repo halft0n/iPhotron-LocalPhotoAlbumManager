@@ -155,10 +155,14 @@ def test_people_card_menu_contains_new_group(qapp: QApplication) -> None:
 
     menu = widget._build_card_menu(widget._summaries[0])
     action_texts = [action.text() for action in menu.actions()]
+    action_ids = [action.data() for action in menu.actions()]
 
     assert "New Group" in action_texts
     assert "Hide" in action_texts
     assert action_texts.index("New Group") < action_texts.index("Merge Into...")
+    assert "new_group" in action_ids
+    assert "toggle_hidden" in action_ids
+    assert "merge" in action_ids
 
 
 def test_people_card_menu_shows_unhide_for_hidden_person(qapp: QApplication) -> None:
@@ -521,8 +525,11 @@ def test_group_and_people_cards_share_same_left_alignment(qapp: QApplication) ->
     widget.close()
 
 
-def test_status_message_updates_without_reloading_cards(qapp: QApplication) -> None:
+def test_status_message_updates_without_reloading_cards(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     widget = PeopleDashboardWidget()
+    widget._service.set_library_root(tmp_path)
     widget._summaries = [
         PersonSummary("person-a", "Alice", "face-a", 3, None, "2024-01-01T00:00:00Z")
     ]
@@ -534,6 +541,57 @@ def test_status_message_updates_without_reloading_cards(qapp: QApplication) -> N
 
     assert widget._board.visible_cards()[0] is original_card
     assert "Click a cluster or group card" in widget._message.text()
+
+
+def test_people_dashboard_retranslate_refreshes_loaded_text_without_reloading_cards(
+    monkeypatch, tmp_path: Path, qapp: QApplication
+) -> None:
+    widget = PeopleDashboardWidget()
+    widget._service.set_library_root(tmp_path)
+    widget._summaries = [
+        PersonSummary("person-a", "Alice", "face-a", 3, None, "2024-01-01T00:00:00Z")
+    ]
+    widget._populate_cards()
+    original_card = widget._board.visible_cards()[0]
+
+    monkeypatch.setattr(
+        people_dashboard_widget,
+        "tr",
+        lambda _context, source_text, *_args: f"XX:{source_text}",
+    )
+
+    widget.retranslate_ui()
+
+    assert widget._title.text() == "XX:People"
+    assert widget._refresh_button.text() == "XX:Refresh"
+    assert widget._groups_title.text() == "XX:Groups"
+    assert widget._people_title.text() == "XX:People & Pets"
+    assert widget._message.text().startswith("XX:Click a cluster or group card")
+    assert widget._board.visible_cards()[0] is original_card
+
+
+def test_people_dashboard_retranslate_keeps_unbound_message_after_unbind(
+    monkeypatch, tmp_path: Path, qapp: QApplication
+) -> None:
+    widget = PeopleDashboardWidget()
+    widget._current_library_root = tmp_path
+    widget._service.set_library_root(tmp_path)
+    widget._summaries = [
+        PersonSummary("person-a", "Alice", "face-a", 3, None, "2024-01-01T00:00:00Z")
+    ]
+    widget._populate_cards()
+    widget.set_library_root(None)
+
+    monkeypatch.setattr(
+        people_dashboard_widget,
+        "tr",
+        lambda _context, source_text, *_args: f"XX:{source_text}",
+    )
+
+    widget.retranslate_ui()
+
+    assert widget._message.text() == "XX:Bind a Basic Library to see People clusters."
+    assert widget._empty.text() == "XX:People appears here after a library is bound and scanned."
 
 
 def test_set_library_root_uses_asset_aware_people_service_factory(

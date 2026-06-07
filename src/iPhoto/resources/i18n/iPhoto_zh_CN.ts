@@ -547,4 +547,172 @@
             <translation>安装地图扩展以使用位置分配。</translation>
         </message>
     </context>
+    <context>
+        <name>PeopleDashboard</name>
+        <message>
+            <source>Merge All Photos of These
+{count} People?</source>
+            <translation>合并这 {count} 个人的所有照片？</translation>
+        </message>
+        <message>
+            <source>By merging photos of these {count} people, they will be recognized as the same person.</source>
+            <translation>合并这 {count} 个人的照片后，他们会被识别为同一个人。</translation>
+        </message>
+        <message>
+            <source>Merge Photos</source>
+            <translation>合并照片</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>取消</translation>
+        </message>
+        <message>
+            <source>People</source>
+            <translation>人物</translation>
+        </message>
+        <message>
+            <source>Select People</source>
+            <translation>选择人物</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>添加</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>刷新</translation>
+        </message>
+        <message>
+            <source>Groups</source>
+            <translation>分组</translation>
+        </message>
+        <message>
+            <source>People &amp; Pets</source>
+            <translation>人物与宠物</translation>
+        </message>
+        <message>
+            <source>Rename</source>
+            <translation>重命名</translation>
+        </message>
+        <message>
+            <source>Name This Person</source>
+            <translation>命名此人物</translation>
+        </message>
+        <message>
+            <source>New Group</source>
+            <translation>新建分组</translation>
+        </message>
+        <message>
+            <source>Unhide</source>
+            <translation>取消隐藏</translation>
+        </message>
+        <message>
+            <source>Hide</source>
+            <translation>隐藏</translation>
+        </message>
+        <message>
+            <source>Unpin</source>
+            <translation>取消固定</translation>
+        </message>
+        <message>
+            <source>Pin</source>
+            <translation>固定</translation>
+        </message>
+        <message>
+            <source>Merge Into...</source>
+            <translation>合并到...</translation>
+        </message>
+        <message>
+            <source>Disband Group</source>
+            <translation>解散分组</translation>
+        </message>
+        <message>
+            <source>Rename Person</source>
+            <translation>重命名人物</translation>
+        </message>
+        <message>
+            <source>Name:</source>
+            <translation>名称：</translation>
+        </message>
+        <message>
+            <source>Pinned groups can't be disbanded until they are unpinned.</source>
+            <translation>已固定的分组必须先取消固定后才能解散。</translation>
+        </message>
+        <message>
+            <source>Cannot Merge People</source>
+            <translation>无法合并人物</translation>
+        </message>
+        <message>
+            <source>Merge Person</source>
+            <translation>合并人物</translation>
+        </message>
+        <message>
+            <source>Merge into</source>
+            <translation>合并到</translation>
+        </message>
+        <message>
+            <source>Choose</source>
+            <translation>选择</translation>
+        </message>
+        <message>
+            <source>this person</source>
+            <translation>此人物</translation>
+        </message>
+        <message>
+            <source>Hide This Person?</source>
+            <translation>隐藏此人物？</translation>
+        </message>
+        <message>
+            <source>Hiding {name} will remove them from the People view until you choose Show Hidden People or unhide them.</source>
+            <translation>隐藏 {name} 后，此人物会从“人物”视图中移除，直到你选择显示隐藏人物或取消隐藏。</translation>
+        </message>
+        <message>
+            <source>Hide Person</source>
+            <translation>隐藏人物</translation>
+        </message>
+        <message>
+            <source>this group</source>
+            <translation>此分组</translation>
+        </message>
+        <message>
+            <source>Disband This Group?</source>
+            <translation>解散此分组？</translation>
+        </message>
+        <message>
+            <source>Disbanding {label} will remove the group but keep all of its people and photos.</source>
+            <translation>解散 {label} 会移除此分组，但保留其中所有人物和照片。</translation>
+        </message>
+        <message>
+            <source>A name is required before pinning this person.</source>
+            <translation>固定此人物前需要先填写名称。</translation>
+        </message>
+        <message>
+            <source>Bind a Basic Library to see People clusters.</source>
+            <translation>绑定基础图库以查看人物聚类。</translation>
+        </message>
+        <message>
+            <source>People appears here after a library is bound and scanned.</source>
+            <translation>绑定并扫描图库后，人物会显示在这里。</translation>
+        </message>
+        <message>
+            <source>Loading People dashboard…</source>
+            <translation>正在加载人物面板…</translation>
+        </message>
+        <message>
+            <source>Click a cluster or group card to open matching assets, or drag cards close together to merge clusters.</source>
+            <translation>点击聚类或分组卡片可打开匹配项目，也可以将卡片拖近以合并聚类。</translation>
+        </message>
+        <message>
+            <source>Scanning faces in the background. This page will fill in as clusters are ready.</source>
+            <translation>正在后台扫描人脸。聚类准备好后，此页面会逐步填充。</translation>
+        </message>
+        <message>
+            <source>No People clusters yet. Run a scan to build face groups.</source>
+            <translation>还没有人物聚类。运行扫描以生成人脸分组。</translation>
+        </message>
+        <message>
+            <source>People in hidden and visible states cannot be merged. Please make both People cards hidden or visible first.</source>
+            <translation>隐藏和可见状态的人物不能合并。请先将两张人物卡片都设为隐藏或可见。</translation>
+        </message>
+    </context>
 </TS>

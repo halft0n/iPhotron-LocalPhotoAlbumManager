@@ -547,4 +547,172 @@
             <translation>Installieren Sie die Kartenerweiterung, um Orte zuzuweisen.</translation>
         </message>
     </context>
+    <context>
+        <name>PeopleDashboard</name>
+        <message>
+            <source>Merge All Photos of These
+{count} People?</source>
+            <translation>Alle Fotos dieser {count} Personen zusammenführen?</translation>
+        </message>
+        <message>
+            <source>By merging photos of these {count} people, they will be recognized as the same person.</source>
+            <translation>Wenn Sie die Fotos dieser {count} Personen zusammenführen, werden sie als dieselbe Person erkannt.</translation>
+        </message>
+        <message>
+            <source>Merge Photos</source>
+            <translation>Fotos zusammenführen</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>Abbrechen</translation>
+        </message>
+        <message>
+            <source>People</source>
+            <translation>Personen</translation>
+        </message>
+        <message>
+            <source>Select People</source>
+            <translation>Personen auswählen</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>Hinzufügen</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>Aktualisieren</translation>
+        </message>
+        <message>
+            <source>Groups</source>
+            <translation>Gruppen</translation>
+        </message>
+        <message>
+            <source>People &amp; Pets</source>
+            <translation>Personen &amp; Haustiere</translation>
+        </message>
+        <message>
+            <source>Rename</source>
+            <translation>Umbenennen</translation>
+        </message>
+        <message>
+            <source>Name This Person</source>
+            <translation>Diese Person benennen</translation>
+        </message>
+        <message>
+            <source>New Group</source>
+            <translation>Neue Gruppe</translation>
+        </message>
+        <message>
+            <source>Unhide</source>
+            <translation>Einblenden</translation>
+        </message>
+        <message>
+            <source>Hide</source>
+            <translation>Ausblenden</translation>
+        </message>
+        <message>
+            <source>Unpin</source>
+            <translation>Lösen</translation>
+        </message>
+        <message>
+            <source>Pin</source>
+            <translation>Anheften</translation>
+        </message>
+        <message>
+            <source>Merge Into...</source>
+            <translation>Zusammenführen mit ...</translation>
+        </message>
+        <message>
+            <source>Disband Group</source>
+            <translation>Gruppe auflösen</translation>
+        </message>
+        <message>
+            <source>Rename Person</source>
+            <translation>Person umbenennen</translation>
+        </message>
+        <message>
+            <source>Name:</source>
+            <translation>Name:</translation>
+        </message>
+        <message>
+            <source>Pinned groups can't be disbanded until they are unpinned.</source>
+            <translation>Angeheftete Gruppen können erst aufgelöst werden, nachdem sie gelöst wurden.</translation>
+        </message>
+        <message>
+            <source>Cannot Merge People</source>
+            <translation>Personen können nicht zusammengeführt werden</translation>
+        </message>
+        <message>
+            <source>Merge Person</source>
+            <translation>Person zusammenführen</translation>
+        </message>
+        <message>
+            <source>Merge into</source>
+            <translation>Zusammenführen mit</translation>
+        </message>
+        <message>
+            <source>Choose</source>
+            <translation>Auswählen</translation>
+        </message>
+        <message>
+            <source>this person</source>
+            <translation>diese Person</translation>
+        </message>
+        <message>
+            <source>Hide This Person?</source>
+            <translation>Diese Person ausblenden?</translation>
+        </message>
+        <message>
+            <source>Hiding {name} will remove them from the People view until you choose Show Hidden People or unhide them.</source>
+            <translation>Wenn Sie {name} ausblenden, wird diese Person aus der Personenansicht entfernt, bis Sie ausgeblendete Personen anzeigen oder sie wieder einblenden.</translation>
+        </message>
+        <message>
+            <source>Hide Person</source>
+            <translation>Person ausblenden</translation>
+        </message>
+        <message>
+            <source>this group</source>
+            <translation>diese Gruppe</translation>
+        </message>
+        <message>
+            <source>Disband This Group?</source>
+            <translation>Diese Gruppe auflösen?</translation>
+        </message>
+        <message>
+            <source>Disbanding {label} will remove the group but keep all of its people and photos.</source>
+            <translation>Wenn Sie {label} auflösen, wird die Gruppe entfernt, aber alle Personen und Fotos bleiben erhalten.</translation>
+        </message>
+        <message>
+            <source>A name is required before pinning this person.</source>
+            <translation>Vor dem Anheften dieser Person ist ein Name erforderlich.</translation>
+        </message>
+        <message>
+            <source>Bind a Basic Library to see People clusters.</source>
+            <translation>Verbinden Sie eine Basisbibliothek, um Personencluster zu sehen.</translation>
+        </message>
+        <message>
+            <source>People appears here after a library is bound and scanned.</source>
+            <translation>Personen erscheinen hier, nachdem eine Bibliothek verbunden und gescannt wurde.</translation>
+        </message>
+        <message>
+            <source>Loading People dashboard…</source>
+            <translation>Personenübersicht wird geladen …</translation>
+        </message>
+        <message>
+            <source>Click a cluster or group card to open matching assets, or drag cards close together to merge clusters.</source>
+            <translation>Klicken Sie auf eine Cluster- oder Gruppenkarte, um passende Elemente zu öffnen, oder ziehen Sie Karten nahe zusammen, um Cluster zusammenzuführen.</translation>
+        </message>
+        <message>
+            <source>Scanning faces in the background. This page will fill in as clusters are ready.</source>
+            <translation>Gesichter werden im Hintergrund gescannt. Diese Seite füllt sich, sobald Cluster bereit sind.</translation>
+        </message>
+        <message>
+            <source>No People clusters yet. Run a scan to build face groups.</source>
+            <translation>Noch keine Personencluster. Starten Sie einen Scan, um Gesichtsgruppen zu erstellen.</translation>
+        </message>
+        <message>
+            <source>People in hidden and visible states cannot be merged. Please make both People cards hidden or visible first.</source>
+            <translation>Ausgeblendete und sichtbare Personen können nicht zusammengeführt werden. Blenden Sie zuerst beide Personenkarten aus oder ein.</translation>
+        </message>
+    </context>
 </TS>

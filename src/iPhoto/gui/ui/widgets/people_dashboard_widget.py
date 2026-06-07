@@ -20,21 +20,21 @@ from PySide6.QtWidgets import (
 )
 
 from iPhoto.bootstrap.library_people_service import create_people_service
+from iPhoto.gui.i18n import tr
 from iPhoto.gui.services.pinned_items_service import PinnedItemsService
 from iPhoto.people.repository import PeopleGroupSummary, PersonSummary
 from iPhoto.people.service import PeopleService
 
+from ..menus.core import MenuActionSpec, MenuContext, populate_menu
+from ..menus.style import apply_menu_style
 from . import dialogs
 from .people_dashboard_board import GroupBoard, PeopleBoard
 from .people_dashboard_cards import GroupCard, PeopleCard
 from .people_dashboard_dialogs import GroupPeopleDialog, MergeConfirmDialog
 from .people_dashboard_shared import (
-    CANVAS_MARGIN,
     _widget_uses_dark_theme,
     configure_people_cover_cache,
 )
-from ..menus.core import MenuActionSpec, MenuContext, populate_menu
-from ..menus.style import apply_menu_style
 
 
 class _PeopleDashboardLoaderSignals(QObject):
@@ -101,6 +101,7 @@ class PeopleDashboardWidget(QWidget):
         self._group_cards: dict[str, GroupCard] = {}
         self._load_generation = 0
         self._loading = False
+        self._last_pending_faces = 0
         self._index_version = 0
         self._loaded_index_version = -1
         self._pending_index_refresh = False
@@ -121,11 +122,10 @@ class PeopleDashboardWidget(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
 
-        self._title = QLabel("People")
+        self._title = QLabel()
         self._title.setStyleSheet("color: #111111; font-size: 18px; font-weight: 700;")
 
         self._refresh_button = QToolButton()
-        self._refresh_button.setText("Refresh")
         self._refresh_button.setAutoRaise(True)
         self._refresh_button.setStyleSheet("""
             QToolButton {
@@ -184,7 +184,7 @@ class PeopleDashboardWidget(QWidget):
         groups_layout.setContentsMargins(0, 0, 0, 0)
         groups_layout.setSpacing(10)
 
-        self._groups_title = QLabel("Groups")
+        self._groups_title = QLabel()
         self._groups_title.setStyleSheet("color: #111111; font-size: 18px; font-weight: 800;")
         groups_layout.addWidget(self._groups_title)
 
@@ -199,7 +199,7 @@ class PeopleDashboardWidget(QWidget):
         groups_layout.addWidget(self._groups_host)
         self._content_layout.addWidget(self._groups_section)
 
-        self._people_title = QLabel("People & Pets")
+        self._people_title = QLabel()
         self._people_title.setStyleSheet("color: #111111; font-size: 18px; font-weight: 800;")
         self._content_layout.addWidget(self._people_title)
 
@@ -210,6 +210,7 @@ class PeopleDashboardWidget(QWidget):
         self._content_layout.addStretch(1)
         self._scroll.setWidget(self._content)
         self._show_hidden_people = self._load_show_hidden_people_setting()
+        self.retranslate_ui()
         self._apply_theme_styles()
 
     def set_people_service(self, service: PeopleService | None) -> None:
@@ -220,11 +221,19 @@ class PeopleDashboardWidget(QWidget):
 
     def set_library_root(self, library_root: Path | None) -> None:
         service_matches_root = self._service.library_root() == library_root
-        service_has_asset_boundary = library_root is None or self._service.asset_repository is not None
-        if self._current_library_root == library_root and service_matches_root and service_has_asset_boundary:
+        service_has_asset_boundary = (
+            library_root is None or self._service.asset_repository is not None
+        )
+        if (
+            self._current_library_root == library_root
+            and service_matches_root
+            and service_has_asset_boundary
+        ):
             return
         self._current_library_root = library_root
-        self._service = create_people_service(library_root) if library_root is not None else PeopleService()
+        self._service = (
+            create_people_service(library_root) if library_root is not None else PeopleService()
+        )
         configure_people_cover_cache(library_root)
         self.reload()
 
@@ -248,6 +257,13 @@ class PeopleDashboardWidget(QWidget):
         self._status_message = message or None
         self._update_status_labels()
 
+    def retranslate_ui(self) -> None:
+        self._title.setText(tr("PeopleDashboard", "People"))
+        self._refresh_button.setText(tr("PeopleDashboard", "Refresh"))
+        self._groups_title.setText(tr("PeopleDashboard", "Groups"))
+        self._people_title.setText(tr("PeopleDashboard", "People & Pets"))
+        self._update_status_labels()
+
     def schedule_index_refresh(self) -> None:
         self._index_version += 1
         if not self.isVisible():
@@ -265,16 +281,15 @@ class PeopleDashboardWidget(QWidget):
         library_root = self._service.library_root()
         if library_root is None:
             self._loading = False
+            self._last_pending_faces = 0
             self._loaded_index_version = index_version
-            self._message.setText("Bind a Basic Library to see People clusters.")
-            self._empty.setText("People appears here after a library is bound and scanned.")
+            self._set_unbound_message()
             self._empty.show()
             self._scroll.hide()
             return
 
         if not preserve_content or (not self._summaries and not self._groups):
-            self._message.setText("Loading People dashboard…")
-            self._empty.setText("Loading People dashboard…")
+            self._set_loading_message()
             self._empty.show()
             self._scroll.hide()
 
@@ -303,8 +318,8 @@ class PeopleDashboardWidget(QWidget):
         self._loading = False
         if not is_bound:
             self._loaded_index_version = index_version
-            self._message.setText("Bind a Basic Library to see People clusters.")
-            self._empty.setText("People appears here after a library is bound and scanned.")
+            self._last_pending_faces = 0
+            self._set_unbound_message()
             self._empty.show()
             self._scroll.hide()
             return
@@ -314,15 +329,13 @@ class PeopleDashboardWidget(QWidget):
         cards_changed = next_summaries != self._summaries or next_groups != self._groups
         self._summaries = next_summaries
         self._groups = next_groups
+        self._last_pending_faces = int(pending)
         self._loaded_index_version = index_version
         self._pending_index_refresh = False
         status_text = status_message if status_message else self._status_message
 
         if self._summaries:
-            self._message.setText(
-                "Click a cluster or group card to open matching assets, "
-                "or drag cards close together to merge clusters."
-            )
+            self._set_populated_message()
             self._empty.hide()
             self._scroll.show()
             if cards_changed:
@@ -333,9 +346,9 @@ class PeopleDashboardWidget(QWidget):
         if status_text:
             body = status_text
         elif pending > 0:
-            body = "Scanning faces in the background. This page will fill in as clusters are ready."
+            body = self._scanning_message()
         else:
-            body = "No People clusters yet. Run a scan to build face groups."
+            body = self._empty_clusters_message()
         self._message.setText(body)
         self._empty.setText(body)
         self._empty.show()
@@ -435,28 +448,40 @@ class PeopleDashboardWidget(QWidget):
             action_specs=[
                 MenuActionSpec(
                     action_id="rename_person",
-                    label="Rename" if summary.name else "Name This Person",
+                    label=(
+                        tr("PeopleDashboard", "Rename")
+                        if summary.name
+                        else tr("PeopleDashboard", "Name This Person")
+                    ),
                     on_trigger=lambda _ctx: self._rename_person(summary),
                 ),
                 MenuActionSpec(
                     action_id="new_group",
-                    label="New Group",
+                    label=tr("PeopleDashboard", "New Group"),
                     on_trigger=lambda _ctx: self._open_group_dialog(summary.person_id),
                 ),
                 MenuActionSpec(
                     action_id="toggle_hidden",
-                    label="Unhide" if summary.is_hidden else "Hide",
+                    label=(
+                        tr("PeopleDashboard", "Unhide")
+                        if summary.is_hidden
+                        else tr("PeopleDashboard", "Hide")
+                    ),
                     on_trigger=lambda _ctx: self._toggle_person_hidden(summary),
                 ),
                 MenuActionSpec(
                     action_id="toggle_pin",
-                    label="Unpin" if self._is_person_pinned(summary.person_id) else "Pin",
+                    label=(
+                        tr("PeopleDashboard", "Unpin")
+                        if self._is_person_pinned(summary.person_id)
+                        else tr("PeopleDashboard", "Pin")
+                    ),
                     on_trigger=lambda _ctx: self._toggle_person_pin(summary),
                     is_enabled=lambda _ctx: self._pin_actions_available(),
                 ),
                 MenuActionSpec(
                     action_id="merge",
-                    label="Merge Into...",
+                    label=tr("PeopleDashboard", "Merge Into..."),
                     on_trigger=lambda _ctx: self._merge_person(summary),
                     is_enabled=lambda _ctx: merge_enabled,
                     separator_before=True,
@@ -481,13 +506,17 @@ class PeopleDashboardWidget(QWidget):
             action_specs=[
                 MenuActionSpec(
                     action_id="toggle_group_pin",
-                    label="Unpin" if self._is_group_pinned(summary.group_id) else "Pin",
+                    label=(
+                        tr("PeopleDashboard", "Unpin")
+                        if self._is_group_pinned(summary.group_id)
+                        else tr("PeopleDashboard", "Pin")
+                    ),
                     on_trigger=lambda _ctx: self._toggle_group_pin(summary),
                     is_enabled=lambda _ctx: self._pin_actions_available(),
                 ),
                 MenuActionSpec(
                     action_id="disband_group",
-                    label="Disband Group",
+                    label=tr("PeopleDashboard", "Disband Group"),
                     on_trigger=lambda _ctx: self._disband_group(summary),
                     separator_before=True,
                 ),
@@ -497,8 +526,17 @@ class PeopleDashboardWidget(QWidget):
         return menu
 
     def _rename_person(self, summary: PersonSummary) -> None:
-        title = "Rename Person" if summary.name else "Name This Person"
-        text, accepted = QInputDialog.getText(self, title, "Name:", text=summary.name or "")
+        title = (
+            tr("PeopleDashboard", "Rename Person")
+            if summary.name
+            else tr("PeopleDashboard", "Name This Person")
+        )
+        text, accepted = QInputDialog.getText(
+            self,
+            title,
+            tr("PeopleDashboard", "Name:"),
+            text=summary.name or "",
+        )
         if not accepted:
             return
         self._service.rename_cluster(summary.person_id, text.strip() or None)
@@ -575,7 +613,7 @@ class PeopleDashboardWidget(QWidget):
         if self._is_group_pinned(summary.group_id):
             dialogs.show_warning(
                 self,
-                "Pinned groups can't be disbanded until they are unpinned.",
+                tr("PeopleDashboard", "Pinned groups can't be disbanded until they are unpinned."),
             )
             return
         if not self._confirm_disband_group(summary):
@@ -594,19 +632,16 @@ class PeopleDashboardWidget(QWidget):
             if has_other_people:
                 dialogs.show_information(
                     self,
-                    (
-                        "People in hidden and visible states cannot be merged. "
-                        "Please make both People cards hidden or visible first."
-                    ),
-                    title="Cannot Merge People",
+                    self._hidden_state_merge_message(),
+                    title=tr("PeopleDashboard", "Cannot Merge People"),
                 )
             return
 
         dialog = GroupPeopleDialog(
             choices,
-            title_text="Merge Person",
-            prompt_text="Merge into",
-            confirm_text="Choose",
+            title_text=tr("PeopleDashboard", "Merge Person"),
+            prompt_text=tr("PeopleDashboard", "Merge into"),
+            confirm_text=tr("PeopleDashboard", "Choose"),
             min_selection=1,
             max_selection=1,
             dark_mode=self._uses_dark_theme(),
@@ -648,11 +683,8 @@ class PeopleDashboardWidget(QWidget):
         if source.is_hidden != target.is_hidden:
             dialogs.show_information(
                 self,
-                (
-                    "People in hidden and visible states cannot be merged. "
-                    "Please make both People cards hidden or visible first."
-                ),
-                title="Cannot Merge People",
+                self._hidden_state_merge_message(),
+                title=tr("PeopleDashboard", "Cannot Merge People"),
             )
             return False
 
@@ -665,23 +697,30 @@ class PeopleDashboardWidget(QWidget):
         return merged
 
     def _confirm_hide_person(self, summary: PersonSummary) -> bool:
-        name = (summary.name or "").strip() or "this person"
+        name = (summary.name or "").strip() or tr("PeopleDashboard", "this person")
         return MergeConfirmDialog.confirm_action(
             item_count=1,
             parent=self,
-            title_text="Hide This Person?",
-            body_text=f"Hiding {name} will remove them from the People view until you choose Show Hidden People or unhide them.",
-            confirm_text="Hide Person",
+            title_text=tr("PeopleDashboard", "Hide This Person?"),
+            body_text=tr(
+                "PeopleDashboard",
+                "Hiding {name} will remove them from the People view until you choose "
+                "Show Hidden People or unhide them.",
+            ).format(name=name),
+            confirm_text=tr("PeopleDashboard", "Hide Person"),
         )
 
     def _confirm_disband_group(self, summary: PeopleGroupSummary) -> bool:
-        label = summary.name.strip() or "this group"
+        label = summary.name.strip() or tr("PeopleDashboard", "this group")
         return MergeConfirmDialog.confirm_action(
             item_count=max(2, len(summary.member_person_ids)),
             parent=self,
-            title_text="Disband This Group?",
-            body_text=f"Disbanding {label} will remove the group but keep all of its people and photos.",
-            confirm_text="Disband Group",
+            title_text=tr("PeopleDashboard", "Disband This Group?"),
+            body_text=tr(
+                "PeopleDashboard",
+                "Disbanding {label} will remove the group but keep all of its people and photos.",
+            ).format(label=label),
+            confirm_text=tr("PeopleDashboard", "Disband Group"),
         )
 
     def _persist_cluster_order(self, ordered_person_ids: list[str]) -> None:
@@ -733,29 +772,82 @@ class PeopleDashboardWidget(QWidget):
         return self._pinned_service is not None and self._service.library_root() is not None
 
     def _prompt_required_person_name(self, summary: PersonSummary) -> str | None:
-        title = "Name This Person"
-        text, accepted = QInputDialog.getText(self, title, "Name:", text=summary.name or "")
+        title = tr("PeopleDashboard", "Name This Person")
+        text, accepted = QInputDialog.getText(
+            self,
+            title,
+            tr("PeopleDashboard", "Name:"),
+            text=summary.name or "",
+        )
         if not accepted:
             return None
         normalized = text.strip()
         if normalized:
             return normalized
-        dialogs.show_warning(self, "A name is required before pinning this person.")
+        dialogs.show_warning(
+            self,
+            tr("PeopleDashboard", "A name is required before pinning this person."),
+        )
         return None
 
     def _update_status_labels(self) -> None:
         if self._loading:
+            if not self._summaries and not self._groups:
+                self._set_loading_message()
+            return
+        if self._service.library_root() is None:
+            self._set_unbound_message()
             return
         if self._summaries:
-            self._message.setText(
-                "Click a cluster or group card to open matching assets, "
-                "or drag cards close together to merge clusters."
-            )
+            self._set_populated_message()
             return
         if self._status_message:
             self._message.setText(self._status_message)
             self._empty.setText(self._status_message)
             return
+        body = (
+            self._scanning_message()
+            if self._last_pending_faces > 0
+            else self._empty_clusters_message()
+        )
+        self._message.setText(body)
+        self._empty.setText(body)
+
+    def _set_unbound_message(self) -> None:
+        self._message.setText(tr("PeopleDashboard", "Bind a Basic Library to see People clusters."))
+        self._empty.setText(
+            tr("PeopleDashboard", "People appears here after a library is bound and scanned.")
+        )
+
+    def _set_loading_message(self) -> None:
+        text = tr("PeopleDashboard", "Loading People dashboard…")
+        self._message.setText(text)
+        self._empty.setText(text)
+
+    def _set_populated_message(self) -> None:
+        self._message.setText(
+            tr(
+                "PeopleDashboard",
+                "Click a cluster or group card to open matching assets, or drag cards close "
+                "together to merge clusters.",
+            )
+        )
+
+    def _scanning_message(self) -> str:
+        return tr(
+            "PeopleDashboard",
+            "Scanning faces in the background. This page will fill in as clusters are ready.",
+        )
+
+    def _empty_clusters_message(self) -> str:
+        return tr("PeopleDashboard", "No People clusters yet. Run a scan to build face groups.")
+
+    def _hidden_state_merge_message(self) -> str:
+        return tr(
+            "PeopleDashboard",
+            "People in hidden and visible states cannot be merged. Please make both People "
+            "cards hidden or visible first.",
+        )
 
     def _schedule_visible_refresh(self) -> None:
         if self._refresh_timer.isActive():

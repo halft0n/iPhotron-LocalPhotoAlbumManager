@@ -1,7 +1,7 @@
 # iPhotron 国际化阶段 1-3 交接文档
 
 > 日期：2026-06-07  
-> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel` 首个业务页面迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移其余业务页面  
+> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel` 与 People Dashboard 首批业务页面迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移其余业务页面
 > 对应指南：`docs/requirements/i18n/i18n_multilingual_architecture_guide.md`
 
 ---
@@ -10,7 +10,7 @@
 
 前序实施覆盖架构指南中的阶段 1「基础设施」和阶段 2「核心壳层 UI」。目标是先把国际化作为运行时服务接入应用，并让桌面主窗口的基础菜单、标题栏、核心操作和基础提示可以在运行时切换语言。
 
-本轮继续推进阶段 3「主要业务页面」，优先完成 `InfoPanel` 迁移，并补齐首个 locale-aware formatter helper。
+本轮继续推进阶段 3「主要业务页面」，已完成 `InfoPanel` 与 People Dashboard 迁移，并补齐首个 locale-aware formatter helper。
 
 已完成内容：
 
@@ -62,6 +62,10 @@
   - `InfoPanel` face avatar context menu 和新建/选择人物弹窗文案。
   - `InfoPanel` metadata 格式化改用当前 UI locale，而不是 `QLocale.system()`。
   - face 菜单命令识别改为稳定 `action_id`，不再依赖 `chosen.text()`。
+  - `PeopleDashboardWidget` 标题、刷新按钮、section 标题、菜单项、输入框、确认/警告弹窗、空态/加载/扫描/已填充状态文案。
+  - `PeopleDashboardWidget.retranslate_ui()` 已支持运行时刷新长期存在页面的固定文案和当前状态文案，不重建已加载人物/分组卡片。
+  - `people_dashboard_dialogs` 默认 merge 确认弹窗与人物选择弹窗文案；调用方传入的自定义弹窗文案由调用方负责翻译。
+  - People Dashboard 菜单继续依赖 `MenuActionSpec.action_id` / `QAction.data()`，不依赖翻译后的 label 判断命令。
   - 继续不翻译文件名、路径、人物名、地点搜索结果、相机/镜头/codec 原始值等用户数据或技术原始值。
 
 ---
@@ -213,15 +217,84 @@ pytest tests/test_i18n_translation_manager.py \
 30 passed
 ```
 
+阶段 3 People Dashboard 迁移后工具链验证：
+
+```bash
+bash scripts/i18n_extract.sh
+```
+
+结果：
+
+```text
+Extracted 173 translation messages.
+```
+
+说明：173 是当前源码中已包裹翻译调用去重后的可提取 message 数；当前 `iPhoto_de.ts` 和 `iPhoto_zh_CN.ts` 各包含 173 条 message，0 条 unfinished。
+
+```bash
+bash scripts/i18n_compile.sh
+```
+
+结果：
+
+```text
+Generated 173 translation(s) (173 finished and 0 unfinished)
+Generated 173 translation(s) (173 finished and 0 unfinished)
+```
+
+本轮 People/i18n/InfoPanel 目标回归：
+
+```bash
+pytest tests/gui/widgets/test_people_dashboard_widget.py \
+  tests/test_i18n_translation_manager.py \
+  tests/test_i18n_extract_tool.py \
+  tests/test_info_panel.py -q
+```
+
+结果：
+
+```text
+91 passed
+```
+
+阶段 1-2 相关回归复跑：
+
+```bash
+pytest tests/test_i18n_translation_manager.py \
+  tests/test_settings_manager.py \
+  tests/application/test_runtime_context.py \
+  tests/architecture/test_layer_boundaries.py -q
+```
+
+结果：
+
+```text
+35 passed
+```
+
+本轮源码静态检查：
+
+```bash
+python -m ruff check \
+  src/iPhoto/gui/ui/widgets/people_dashboard_widget.py \
+  src/iPhoto/gui/ui/widgets/people_dashboard_dialogs.py
+```
+
+结果：
+
+```text
+All checks passed
+```
+
 ---
 
 ## 3. 已知限制
 
-当前完成的是核心壳层国际化和 `InfoPanel` 首个业务页面迁移，不是全应用文案迁移。
+当前完成的是核心壳层国际化，以及 `InfoPanel` 和 People Dashboard 首批业务页面迁移，不是全应用文案迁移。
 
 仍未完成的主要区域：
 
-- `PeopleDashboardWidget`、people dialogs、albums dashboard、gallery context menu 等业务页面文案。
+- albums dashboard、gallery context menu 等业务页面文案。
 - detail/player/edit sidebar 中仍有 tooltip、按钮、状态文案未完整迁移。
 - `src/maps/main.py` 独立地图预览入口未迁移。
 - `tools/check_i18n_strings.py` 硬编码文案门禁尚未实现。
@@ -235,8 +308,10 @@ pytest tests/test_i18n_translation_manager.py \
 - `TranslationManager` 负责全局安装 translator。由于 Qt translator 是 application-wide 状态，测试中多个 manager 会互相替换当前 translator，这是预期行为。
 - 主窗口语言刷新已改为 deferred retranslate，后续新增同步刷新逻辑时不要直接在 menu action triggered 的调用栈中访问 popup menu 对象。
 - `InfoPanel` 已实现 `retranslate_ui()`，并由 `MainWindow.retranslate_ui_tree()` 自动调用。
+- `PeopleDashboardWidget` 已实现 `retranslate_ui()`，并由 `MainWindow.retranslate_ui_tree()` 自动调用；运行时切换语言会刷新页面标题、按钮、section 标题和当前状态文案，但不会重载或重建已有卡片。
 - 后续迁移 context menu 时不要用 `action.text()` 判断命令；应依赖 `MenuActionSpec.action_id` / `QAction.data()`。
 - 如果传入 `InfoPanel.set_location_capability(fallback_text=...)` 的是外部自定义文案，该文案按调用方负责翻译；默认 fallback 已由 `InfoPanel` 自身翻译。
+- 如果传入 `GroupPeopleDialog(title_text=..., prompt_text=..., confirm_text=...)` 或 `MergeConfirmDialog.confirm_action(...)` 的是自定义文案，该文案按调用方负责翻译；People Dashboard 内部调用已完成翻译。
 
 ---
 
@@ -248,11 +323,9 @@ pytest tests/test_i18n_translation_manager.py \
 
 建议按用户可见度排序：
 
-1. `src/iPhoto/gui/ui/widgets/people_dashboard_widget.py`
-2. `src/iPhoto/gui/ui/widgets/people_dashboard_dialogs.py`
-3. `src/iPhoto/gui/ui/widgets/albums_dashboard.py`
-4. gallery/detail/player/edit sidebar 相关 widgets 和 controllers
-5. context menu registry：`src/iPhoto/gui/ui/menus/*`
+1. `src/iPhoto/gui/ui/widgets/albums_dashboard.py`
+2. gallery/detail/player/edit sidebar 相关 widgets 和 controllers
+3. context menu registry：`src/iPhoto/gui/ui/menus/*`
 
 每个 widget/controller 迁移时需要同步完成：
 
@@ -328,3 +401,4 @@ python -m ruff check src/iPhoto/gui/i18n tools/extract_i18n_strings.py
 - 切回 `System`，确认设置持久化且应用不崩溃。
 - 在切换语言后打开基础图库绑定、地图扩展入口、扫描/加载流程，检查核心提示文案。
 - 在切换语言后打开 detail 的 Info 面板，检查标题、关闭 tooltip、location fallback/download/confirm 文案、face 菜单和 metadata loading/unavailable 文案。
+- 在切换语言后打开 People 页面，检查标题、刷新按钮、Groups/People & Pets section、人物/分组菜单、merge/hide/disband 弹窗和空态/加载/扫描状态文案。
