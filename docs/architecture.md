@@ -6,7 +6,8 @@ one process-level `RuntimeContext` owns one active `LibrarySession`, and GUI,
 CLI, watchers, and workers enter behavior through application surfaces rather
 than legacy facades.
 
-For detailed migration records and verification history, see `docs/refactor/`.
+For completed migration records and verification history, see
+`docs/finished/refactor/vnext-2026-06/`.
 
 ## Status
 
@@ -202,6 +203,28 @@ Current public boundary names include:
 | `LocationAssetServicePort` | Session-bound geotagged asset queries. |
 | `MapInteractionServicePort` | Marker-click and map interaction semantics. |
 
+### Large Library Query And Scan Contracts
+
+Large-library browsing is part of the current production architecture, not a
+future side design. The active query path is SQL-first and windowed:
+
+- `CollectionQuery`, `PageCursor`, `PageResult`, and `WindowResult` describe
+  collection intent, keyset pages, and bounded viewport windows.
+- `LibraryAssetQueryService` converts supported `AssetQuery` reads to
+  repository-backed collection SQL for All Photos, albums, favorites, videos,
+  maps/GPS, media type, and date filters.
+- `GalleryCollectionStore` treats `asset_at()` as cache-only and loads bounded
+  windows through `read_query_asset_window()`; direct row lookup uses
+  `find_row_by_path()` rather than scanning the model.
+- Normal gallery collections default to `thumbnail_state='ready'` and require a
+  non-empty `thumb_cache_key`; stale, pending, failed, or old no-key rows are
+  repair/backfill candidates, not visible media grid rows.
+- Scan publishing uses `ScanBatchCommitted`, split into small ready-row batches
+  after DB commit. Production code must not restore the old `scanChunkReady`
+  transport for real-time UI updates.
+- `scan_jobs` and `scan_events` persist job state, stage changes, batch commit
+  metadata, and stage timing for scan observability.
+
 ### Infrastructure
 
 `infrastructure/` owns concrete adapters: SQLite-backed state, manifest and
@@ -282,11 +305,11 @@ sequenceDiagram
     participant Query as Asset Query Surface
     participant Repo as AssetRepositoryPort
 
-    VM->>Session: request collection page
-    Session->>Query: execute query/count/page
-    Query->>Repo: read persisted rows
-    Repo-->>Query: rows + count
-    Query-->>VM: DTO page
+    VM->>Session: request visible window
+    Session->>Query: CollectionQuery / AssetQuery
+    Query->>Repo: read_collection_window()
+    Repo-->>Query: WindowResult rows + count + revision
+    Query-->>VM: bounded DTO window
 ```
 
 GUI viewmodels may cache window/selection state, but repository/session surfaces
@@ -309,13 +332,15 @@ sequenceDiagram
     Scan->>Scanner: discover media
     Scanner-->>Scan: scan chunks
     Scan->>Repo: merge scan rows
+    Scan->>Repo: append scan job/event records
     Scan->>People: enqueue eligible rows
     Scan->>Pairing: refresh roles/materialization
-    Scan-->>Trigger: progress/result
+    Scan-->>Trigger: progress/result + ScanBatchCommitted
 ```
 
 Scanning has one application use case. Qt workers adapt threading/progress, and
-CLI uses the same session surface without Qt.
+CLI uses the same session surface without Qt. UI scan batches are ready-only and
+carry full thumbnail cache keys so visible media rows are immediately drawable.
 
 ### Assign Location
 

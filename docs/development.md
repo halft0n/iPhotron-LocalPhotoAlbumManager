@@ -59,7 +59,7 @@ Read these before architecture-sensitive work:
 
 - [AGENT.md](../AGENT.md)
 - [Architecture](architecture.md)
-- [Refactor current progress](refactor/05-current-progress.md)
+- [Completed vNext refactor archive](finished/refactor/vnext-2026-06/README.md)
 
 Run the architecture guard before or with focused tests:
 
@@ -70,6 +70,31 @@ python3 tools/check_architecture.py
 
 The GitHub Actions test workflow runs `python tools/check_architecture.py`
 before the Python test suite.
+
+---
+
+## Regression Guardrails
+
+Small behavior contracts that are easy to break during feature work live in
+`docs/misc/`. Read the relevant note before touching these areas:
+
+| Area | Guardrail |
+|------|-----------|
+| Scan UI publishing | [SCAN_VISIBLE_PUBLISH_GUARDRAILS.md](misc/SCAN_VISIBLE_PUBLISH_GUARDRAILS.md) |
+| Large library collection queries | [LARGE_LIBRARY_QUERY_GUARDRAILS.md](misc/LARGE_LIBRARY_QUERY_GUARDRAILS.md) |
+| Trash and restore state | [TRASH_RESTORE_STATE_GUARDRAILS.md](misc/TRASH_RESTORE_STATE_GUARDRAILS.md) |
+| Move/restore optimistic UI | [MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md](misc/MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md) |
+| Project popups and People UI regressions | [PROJECT_POPUP_GUARDRAILS.md](misc/PROJECT_POPUP_GUARDRAILS.md) |
+| macOS map GL transparency | [MACOS_MAP_GL_TRANSPARENCY_NOTES.md](misc/MACOS_MAP_GL_TRANSPARENCY_NOTES.md) |
+
+Useful focused checks when touching scan, query, trash, move, or restore:
+
+```bash
+.venv/bin/python -m pytest tests/application/test_scan_library_use_case.py tests/application/test_library_scan_service.py tests/library/test_scanner_worker.py -q
+.venv/bin/python -m pytest tests/application/test_library_asset_query_service.py tests/cache/test_index_store_features.py tests/performance/test_refactor_performance_baseline.py -q
+.venv/bin/python -m pytest tests/application/test_temp_library_end_to_end.py tests/application/test_library_asset_lifecycle_service.py tests/services/test_asset_move_service.py tests/services/test_restoration_service.py -q
+.venv/bin/python -m pytest tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/gui/coordinators/test_main_coordinator_pending_moves.py -q
+```
 
 ---
 

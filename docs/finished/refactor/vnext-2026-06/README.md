@@ -1,14 +1,13 @@
-# Refactor vNext Workspace
+# Refactor vNext Archive
 
-> 当前有效的大架构重构工作区。旧的阶段性 refactor 文档已经归档到
-> `docs/finished/referactor/`，这里只保留下一轮架构重写的目标、需求、
-> 规划和执行检查清单。
+> 本目录是 2026-06 完成的 vNext 重构归档。当前生产架构入口是
+> `docs/architecture.md`；本目录只保留迁移规格、过程记录和验证历史。
 
 ## 文档定位
 
-- `docs/architecture.md` 是项目顶层架构入口，描述 iPhotron 应该收敛到的长期目标。
-- `docs/refactor/*` 是本轮重构实施规格，描述如何把当前项目推进到目标架构。
-- `docs/finished/referactor/*` 是历史参考，不再作为当前重构的执行依据。
+- `docs/architecture.md` 是项目顶层架构入口，描述当前生产架构。
+- `docs/finished/refactor/vnext-2026-06/*` 是本轮完成归档。
+- `docs/finished/referactor/*` 是更早历史参考，不再作为当前实施依据。
 
 本轮重构的核心不是换目录名，而是：
 

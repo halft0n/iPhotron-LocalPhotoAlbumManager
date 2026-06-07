@@ -629,7 +629,7 @@ large-library scan transport migration. The fix preserves the new
 
 Detailed handoff:
 
-- `docs/refactor/34-large-library-performance-scan-visible-publish-repair.md`
+- `docs/finished/refactor/vnext-2026-06/34-large-library-performance-scan-visible-publish-repair.md`
 
 ## Findings
 

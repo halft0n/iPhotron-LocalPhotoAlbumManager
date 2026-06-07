@@ -10,7 +10,7 @@
 重构文档后，扫描架构逐步从旧 `scanChunkReady` 迁移到
 `ScanBatchCommitted`。在完全下线 `scanChunkReady` 后，扫描过程中 UI
 不再稳定地实时感知新增媒体，违反了
-`docs/requirements/large_library_performance` 中的要求：
+`docs/finished/requirements/large_library_performance` 中的要求：
 
 - UI publish 每 100-250ms 或 50-200 ready rows 合并。
 - `ScanBatchCommitted` 只发布 ready rows。

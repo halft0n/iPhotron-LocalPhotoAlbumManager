@@ -10,7 +10,7 @@
 主要工作：
 
 - 将旧 refactor 文档归档，只保留当前 vNext 文档。
-- 更新 `docs/architecture.md` 与 `docs/refactor/*` 的引用关系。
+- 更新 `docs/architecture.md` 与本归档目录文档的引用关系。
 - 扩展 `tools/check_architecture.py`，把当前已知违规方向变成可执行检查。
 - 在 CI 或本地质量门禁中加入架构检查。
 
@@ -23,7 +23,7 @@
 
 完成条件：
 
-- `docs/refactor/` 只有 vNext 文档。
+- 本目录保留 vNext 文档归档。
 - `python3 tools/check_architecture.py` 通过。
 - 已知违规项被记录为 migration exceptions 或转化为失败检查并在对应阶段修复。
 
@@ -191,4 +191,3 @@ Edit：
 - 兼容层只桥接，不删到行为稳定后再清理。
 - 删除旧路径前必须有 tests 覆盖目标路径。
 - 每次迁移优先选择一个完整用户流程收口，而不是只移动文件。
-
