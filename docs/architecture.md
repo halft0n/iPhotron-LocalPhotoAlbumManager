@@ -138,11 +138,18 @@ production runtime -> iPhoto.models.*
 RuntimeContext
   settings
   theme
-  recent_libraries
+  library
+  facade
+  event_bus
+  asset_runtime
+  recent_albums
+  defer_startup_tasks
+  container
   library_session: LibrarySession | None
   open_library(root)
   close_library()
   resume_startup_tasks()
+  remember_album(root)
 ```
 
 `LibrarySession` owns library-scoped adapters and exposes application-facing
@@ -151,6 +158,7 @@ surfaces.
 ```text
 LibrarySession
   library_root
+  state_repository
   assets
   state
   asset_queries
@@ -165,8 +173,12 @@ LibrarySession
   map_interactions
   edit
   locations
+  assign_location_service()
   shutdown()
 ```
+
+CLI and other non-GUI callers create the same session boundary through
+`create_headless_library_session(root)`.
 
 Production GUI and CLI do not create standalone fallback services. If no active
 session exists, GUI services should fail explicitly or no-op safely according to
@@ -191,17 +203,25 @@ Current public boundary names include:
 
 | Port | Responsibility |
 | --- | --- |
+| `AlbumRepositoryPort` | Folder-local album manifest read/write without exposing legacy shims upstream. |
 | `AssetRepositoryPort` | Asset query, count, scan merge, state update, and transaction semantics for the current library store. |
+| `AssetFavoriteQueryPort` | Favorite-state reads through a session-owned query surface. |
+| `AssetStateServicePort` | Durable asset-state commands such as favorite toggles. |
+| `EditServicePort` | Session-scoped edit sidecar and render-state surface. |
+| `EditSidecarPort` | `.ipo` read/write and edit state persistence. |
 | `LibraryStateRepositoryPort` | Durable library user-state boundary for favorites, hidden/trash, pinned/order, and related state. |
+| `LocationAssetServicePort` | Session-bound geotagged asset queries. |
+| `LocationMetadataPort` | Explicit location assignment metadata write/read-back boundary. |
 | `MediaScannerPort` | Media discovery and normalized scan candidates without persistence ownership. |
 | `MetadataReaderPort` | Image/video metadata reads. |
 | `MetadataWriterPort` | Explicit best-effort metadata writes such as Assign Location GPS write-back. |
-| `ThumbnailRendererPort` | Thumbnail/preview generation without GUI ownership. |
-| `PeopleIndexPort` | People scan candidate enqueue, snapshot commit, and People/group queries. |
-| `MapRuntimePort` | Maps extension availability and runtime adapter selection. |
-| `EditSidecarPort` | `.ipo` read/write and edit state persistence. |
-| `LocationAssetServicePort` | Session-bound geotagged asset queries. |
 | `MapInteractionServicePort` | Marker-click and map interaction semantics. |
+| `MapRuntimePort` | Maps extension availability and runtime adapter selection. |
+| `PeopleAssetRepositoryPort` | Asset-index reads and face-status updates used by the People bounded context. |
+| `PeopleIndexPort` | People scan candidate enqueue, snapshot commit, and People/group queries. |
+| `PinnedStateRepositoryPort` | Pinned sidebar state persistence across libraries. |
+| `TaskSchedulerPort` | Background task submission and cancellation boundary. |
+| `ThumbnailRendererPort` | Thumbnail/preview generation without GUI ownership. |
 
 ### Large Library Query And Scan Contracts
 
@@ -250,8 +270,9 @@ It is not a legacy manager facade.
 
 - `people/`: optional face detection/clustering runtime, People repositories,
   stable People state, manual faces, groups, covers, and People service API.
-- `maps/`: optional offline map runtime, tile parsing, OBF/native
-  widget/helper integration, search, and map rendering internals.
+- `src/maps`: optional offline map runtime, tile parsing, OBF/native
+  widget/helper integration, search, and map rendering internals. GUI map
+  views construct concrete map widgets through `map_widget_factory`.
 - `core/`: editing math, filters, geometry, preview backends, export transforms,
   raw loading, and Live Photo pairing rules.
 - `cache/index_store/`: current global SQLite index implementation used behind
@@ -270,7 +291,8 @@ Each library root owns a `.iPhoto/` workspace.
 | `.iPhoto/faces/face_state.db` | Durable People user state: names, covers, hidden flags, order, groups, pinned state, group covers, and manual faces. |
 | `.iPhoto/faces/thumbnails/` | Rebuildable cropped face thumbnails. |
 | `.ipo` sidecars | Durable non-destructive edit instructions next to source media. |
-| `.iphoto.album.json` / `.iphoto.album` / `.iPhoto/manifest.json` | Folder-local album metadata and marker compatibility formats. |
+| `.iphoto.album.json` / `.iPhoto/manifest.json` | Folder-local album metadata formats. |
+| `.iphoto.album` | Legacy album marker compatibility file. |
 
 Implementation stages may continue storing scan facts and some user state in the
 same SQLite file, but repository APIs and merge behavior must maintain the
