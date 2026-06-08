@@ -1,7 +1,7 @@
 # iPhotron 国际化阶段 1-3 交接文档
 
 > 日期：2026-06-08
-> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel`、People Dashboard 与相册导航面首批业务页面迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移其余业务页面
+> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel`、People Dashboard、相册导航面与 gallery context menu 首批业务页面迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移其余业务页面
 > 对应指南：`docs/requirements/i18n/i18n_multilingual_architecture_guide.md`
 
 ---
@@ -10,7 +10,7 @@
 
 前序实施覆盖架构指南中的阶段 1「基础设施」和阶段 2「核心壳层 UI」。目标是先把国际化作为运行时服务接入应用，并让桌面主窗口的基础菜单、标题栏、核心操作和基础提示可以在运行时切换语言。
 
-本轮继续推进阶段 3「主要业务页面」，已完成 `InfoPanel`、People Dashboard 与相册导航面迁移，并补齐首个 locale-aware formatter helper。
+本轮继续推进阶段 3「主要业务页面」，已完成 `InfoPanel`、People Dashboard、相册导航面与 gallery context menu 迁移，并补齐首个 locale-aware formatter helper。
 
 已完成内容：
 
@@ -70,6 +70,9 @@
   - `AlbumTreeModel` 保留英文 `AlbumTreeItem.title` 作为导航稳定 key，仅在 `DisplayRole` 返回翻译文案；运行时切换语言通过 `retranslate_ui()` 发出 `dataChanged`，不重建模型或打断选择状态。
   - `AlbumsDashboard` 标题、空态、卡片菜单和重命名弹窗文案；相册数量改用当前 UI locale 的整数格式化。
   - 相册导航面菜单继续由 node type、callback 和 `MenuActionSpec.action_id` 驱动，不依赖翻译后的 label 判断命令。
+  - `GalleryMenu` 右键菜单 registry 已迁移，包括 Copy、Reveal、Export、Set as Cover、Move to、Delete、Restore、Paste、Open Folder Location。
+  - `ContextMenuController` gallery 右键菜单路径的状态栏/toast 反馈已迁移；动态文件名和路径使用 `{filename}` / `{path}` 占位符，不进入翻译资源。
+  - Gallery context menu 测试已改为优先断言 `QAction.data()` 中的稳定 `action_id`，不把翻译后的 label 作为业务契约。
   - 继续不翻译文件名、路径、人物名、地点搜索结果、相机/镜头/codec 原始值等用户数据或技术原始值。
 
 ---
@@ -352,15 +355,73 @@ All checks passed
 
 说明：全规则 `ruff check` 对这些历史 Qt widget 文件仍会命中既有 Qt mixedCase、旧类型注解、B008、长行和 blind-exception 等规则噪声；本轮只保证新增/触碰路径的 import 与未使用符号检查通过，并通过目标测试覆盖行为。
 
+阶段 3 gallery context menu 迁移后工具链验证：
+
+```bash
+bash scripts/i18n_extract.sh
+```
+
+结果：
+
+```text
+Extracted 238 translation messages.
+```
+
+说明：238 是当前源码中已包裹翻译调用去重后的可提取 message 数；当前 `iPhoto_de.ts` 和 `iPhoto_zh_CN.ts` 各包含 238 条 message，0 条 unfinished。
+
+```bash
+bash scripts/i18n_compile.sh
+```
+
+结果：
+
+```text
+Generated 238 translation(s) (238 finished and 0 unfinished)
+Generated 238 translation(s) (238 finished and 0 unfinished)
+```
+
+本轮 gallery context menu/i18n 目标回归：
+
+```bash
+pytest tests/ui/controllers/test_context_menu_export.py \
+  tests/ui/controllers/test_context_menu_cover.py \
+  tests/ui/controllers/test_context_menu_operations.py \
+  tests/test_i18n_translation_manager.py \
+  tests/test_i18n_extract_tool.py -q
+```
+
+结果：
+
+```text
+36 passed
+```
+
+本轮窄范围静态检查：
+
+```bash
+python -m ruff check --select I,F \
+  src/iPhoto/gui/ui/menus/gallery_menu.py \
+  src/iPhoto/gui/ui/controllers/context_menu_controller.py \
+  tests/ui/controllers/test_context_menu_export.py \
+  tests/ui/controllers/test_context_menu_cover.py \
+  tests/ui/controllers/test_context_menu_operations.py \
+  tests/test_i18n_translation_manager.py
+```
+
+结果：
+
+```text
+All checks passed
+```
+
 ---
 
 ## 3. 已知限制
 
-当前完成的是核心壳层国际化，以及 `InfoPanel`、People Dashboard、相册导航面首批业务页面迁移，不是全应用文案迁移。
+当前完成的是核心壳层国际化，以及 `InfoPanel`、People Dashboard、相册导航面、gallery context menu 首批业务页面迁移，不是全应用文案迁移。
 
 仍未完成的主要区域：
 
-- gallery context menu 等业务页面文案。
 - detail/player/edit sidebar 中仍有 tooltip、按钮、状态文案未完整迁移。
 - `src/maps/main.py` 独立地图预览入口未迁移。
 - `tools/check_i18n_strings.py` 硬编码文案门禁尚未实现。
@@ -390,9 +451,9 @@ All checks passed
 
 建议按用户可见度排序：
 
-1. gallery context menu registry：`src/iPhoto/gui/ui/menus/gallery_menu.py`
-2. detail/player/edit sidebar 相关 widgets 和 controllers
-3. map view 中用户可见状态与 `src/maps/main.py` 独立入口
+1. detail/player/edit sidebar 相关 widgets 和 controllers
+2. map view 中用户可见状态与 `src/maps/main.py` 独立入口
+3. 后续新增 gallery context menu 文案继续使用 `GalleryMenu` / `GalleryContextMenu` context，并保持 `QAction.data()` 作为命令契约。
 
 每个 widget/controller 迁移时需要同步完成：
 
@@ -470,3 +531,4 @@ python -m ruff check src/iPhoto/gui/i18n tools/extract_i18n_strings.py
 - 在切换语言后打开 detail 的 Info 面板，检查标题、关闭 tooltip、location fallback/download/confirm 文案、face 菜单和 metadata loading/unavailable 文案。
 - 在切换语言后打开 People 页面，检查标题、刷新按钮、Groups/People & Pets section、人物/分组菜单、merge/hide/disband 弹窗和空态/加载/扫描状态文案。
 - 在切换语言后打开相册侧边栏和 Albums 页面，检查 Basic Library、All Photos、Pinned、Albums、Recently Deleted、空态、相册卡片菜单、新建/重命名相册弹窗和 pin/unpin 菜单文案。
+- 在切换语言后打开 gallery 右键菜单，检查 Copy、Reveal、Export、Set as Cover、Move to、Delete、Restore、Paste、Open Folder Location，以及删除/恢复/复制/粘贴/设为封面的状态提示和 toast 文案。

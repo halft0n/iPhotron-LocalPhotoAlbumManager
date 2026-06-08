@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtCore import QPoint, QModelIndex
+from PySide6.QtCore import QModelIndex, QPoint
 
 from iPhoto.gui.ui.controllers.context_menu_controller import ContextMenuController
 
@@ -73,9 +73,7 @@ def test_export_action_present_when_selected(mock_qmenu_cls, mock_dependencies):
     # Trigger context menu
     controller._handle_context_menu(QPoint(10, 10))
 
-    # Verify "Export" action is added
-    actions_added = [args[0] for args, _ in mock_menu.addAction.call_args_list]
-    assert "Export" in actions_added, f"Export action not found in {actions_added}"
+    mock_menu.addAction.return_value.setData.assert_any_call("export")
 
 
 @patch("iPhoto.gui.ui.controllers.context_menu_controller.QMenu")
@@ -103,8 +101,11 @@ def test_export_action_absent_when_no_selection(mock_qmenu_cls, mock_dependencie
     mock_menu = mock_qmenu_cls.return_value
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_menu.addAction.call_args_list]
-    assert "Export" not in actions_added, f"Export action found in {actions_added} but shouldn't be"
+    action_ids = [
+        args[0]
+        for args, _kwargs in mock_menu.addAction.return_value.setData.call_args_list
+    ]
+    assert "export" not in action_ids
 
 
 @patch("iPhoto.gui.ui.controllers.context_menu_controller.QMenu")
@@ -136,9 +137,13 @@ def test_blank_area_menu_ignores_existing_selection(mock_qmenu_cls, mock_depende
     mock_menu = mock_qmenu_cls.return_value
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_menu.addAction.call_args_list]
-    assert "Paste" in actions_added, f"Paste action not found in {actions_added}"
-    assert "Copy" not in actions_added, f"Copy action found in {actions_added} but shouldn't be"
+    action_ids = [
+        args[0]
+        for args, _kwargs in mock_menu.addAction.return_value.setData.call_args_list
+    ]
+    assert "paste" in action_ids
+    assert "copy" not in action_ids
+    assert action_ids == ["paste", "open_folder_location"]
 
 
 def test_selected_asset_paths_are_resolved_via_provider(mock_dependencies):

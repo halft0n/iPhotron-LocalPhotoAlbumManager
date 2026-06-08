@@ -70,6 +70,8 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
     assert QCoreApplication.translate("MainHeader", "Language", None) == "语言"
     assert QCoreApplication.translate("InfoPanel", "Download Map Extension", None) == "下载地图扩展"
     assert QCoreApplication.translate("AlbumSidebar", "Pin Album", None) == "固定相册"
+    assert QCoreApplication.translate("GalleryMenu", "Export", None) == "导出"
+    assert QCoreApplication.translate("GalleryContextMenu", "Deleted", None) == "已删除"
 
     panel = InfoPanel()
     try:

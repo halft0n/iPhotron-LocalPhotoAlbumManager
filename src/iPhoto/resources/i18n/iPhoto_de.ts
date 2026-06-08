@@ -869,4 +869,122 @@
             <translation>Der Albumname darf nicht leer sein.</translation>
         </message>
     </context>
+    <context>
+        <name>GalleryContextMenu</name>
+        <message>
+            <source>Items inside Recently Deleted cannot be deleted again.</source>
+            <translation>Elemente in „Zuletzt gelöscht“ können nicht erneut gelöscht werden.</translation>
+        </message>
+        <message>
+            <source>Select items to delete first.</source>
+            <translation>Wählen Sie zuerst Elemente zum Löschen aus.</translation>
+        </message>
+        <message>
+            <source>Deleted</source>
+            <translation>Gelöscht</translation>
+        </message>
+        <message>
+            <source>Select items to restore first.</source>
+            <translation>Wählen Sie zuerst Elemente zum Wiederherstellen aus.</translation>
+        </message>
+        <message>
+            <source>Restoring ...</source>
+            <translation>Wiederherstellung läuft ...</translation>
+        </message>
+        <message>
+            <source>Select items to copy first.</source>
+            <translation>Wählen Sie zuerst Elemente zum Kopieren aus.</translation>
+        </message>
+        <message>
+            <source>Selected files are unavailable on disk.</source>
+            <translation>Ausgewählte Dateien sind auf dem Datenträger nicht verfügbar.</translation>
+        </message>
+        <message>
+            <source>Copied to Clipboard</source>
+            <translation>In Zwischenablage kopiert</translation>
+        </message>
+        <message>
+            <source>Select items to reveal first.</source>
+            <translation>Wählen Sie zuerst Elemente zum Anzeigen aus.</translation>
+        </message>
+        <message>
+            <source>File not found: {filename}</source>
+            <translation>Datei nicht gefunden: {filename}</translation>
+        </message>
+        <message>
+            <source>Revealed {filename} in file manager.</source>
+            <translation>{filename} im Dateimanager angezeigt.</translation>
+        </message>
+        <message>
+            <source>No files to paste from clipboard.</source>
+            <translation>Keine Dateien zum Einfügen in der Zwischenablage.</translation>
+        </message>
+        <message>
+            <source>Open an album before pasting files.</source>
+            <translation>Öffnen Sie vor dem Einfügen von Dateien ein Album.</translation>
+        </message>
+        <message>
+            <source>Pasting files...</source>
+            <translation>Dateien werden eingefügt...</translation>
+        </message>
+        <message>
+            <source>No album is currently open.</source>
+            <translation>Derzeit ist kein Album geöffnet.</translation>
+        </message>
+        <message>
+            <source>Folder not found: {path}</source>
+            <translation>Ordner nicht gefunden: {path}</translation>
+        </message>
+        <message>
+            <source>Select items to move first.</source>
+            <translation>Wählen Sie zuerst Elemente zum Verschieben aus.</translation>
+        </message>
+        <message>
+            <source>Cover Updated</source>
+            <translation>Cover aktualisiert</translation>
+        </message>
+        <message>
+            <source>Unable to set cover for the selected item.</source>
+            <translation>Cover konnte für das ausgewählte Element nicht festgelegt werden.</translation>
+        </message>
+    </context>
+    <context>
+        <name>GalleryMenu</name>
+        <message>
+            <source>Copy</source>
+            <translation>Kopieren</translation>
+        </message>
+        <message>
+            <source>Reveal in File Manager</source>
+            <translation>Im Dateimanager anzeigen</translation>
+        </message>
+        <message>
+            <source>Export</source>
+            <translation>Exportieren</translation>
+        </message>
+        <message>
+            <source>Set as Cover</source>
+            <translation>Als Cover festlegen</translation>
+        </message>
+        <message>
+            <source>Move to</source>
+            <translation>Verschieben nach</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>Löschen</translation>
+        </message>
+        <message>
+            <source>Restore</source>
+            <translation>Wiederherstellen</translation>
+        </message>
+        <message>
+            <source>Paste</source>
+            <translation>Einfügen</translation>
+        </message>
+        <message>
+            <source>Open Folder Location</source>
+            <translation>Ordnerposition öffnen</translation>
+        </message>
+    </context>
 </TS>

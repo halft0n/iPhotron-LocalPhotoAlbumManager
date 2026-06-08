@@ -869,4 +869,122 @@
             <translation>相册名称不能为空。</translation>
         </message>
     </context>
+    <context>
+        <name>GalleryContextMenu</name>
+        <message>
+            <source>Items inside Recently Deleted cannot be deleted again.</source>
+            <translation>最近删除中的项目不能再次删除。</translation>
+        </message>
+        <message>
+            <source>Select items to delete first.</source>
+            <translation>请先选择要删除的项目。</translation>
+        </message>
+        <message>
+            <source>Deleted</source>
+            <translation>已删除</translation>
+        </message>
+        <message>
+            <source>Select items to restore first.</source>
+            <translation>请先选择要恢复的项目。</translation>
+        </message>
+        <message>
+            <source>Restoring ...</source>
+            <translation>正在恢复...</translation>
+        </message>
+        <message>
+            <source>Select items to copy first.</source>
+            <translation>请先选择要复制的项目。</translation>
+        </message>
+        <message>
+            <source>Selected files are unavailable on disk.</source>
+            <translation>所选文件在磁盘上不可用。</translation>
+        </message>
+        <message>
+            <source>Copied to Clipboard</source>
+            <translation>已复制到剪贴板</translation>
+        </message>
+        <message>
+            <source>Select items to reveal first.</source>
+            <translation>请先选择要显示的项目。</translation>
+        </message>
+        <message>
+            <source>File not found: {filename}</source>
+            <translation>找不到文件：{filename}</translation>
+        </message>
+        <message>
+            <source>Revealed {filename} in file manager.</source>
+            <translation>已在文件管理器中显示 {filename}。</translation>
+        </message>
+        <message>
+            <source>No files to paste from clipboard.</source>
+            <translation>剪贴板中没有可粘贴的文件。</translation>
+        </message>
+        <message>
+            <source>Open an album before pasting files.</source>
+            <translation>请先打开相册再粘贴文件。</translation>
+        </message>
+        <message>
+            <source>Pasting files...</source>
+            <translation>正在粘贴文件...</translation>
+        </message>
+        <message>
+            <source>No album is currently open.</source>
+            <translation>当前未打开相册。</translation>
+        </message>
+        <message>
+            <source>Folder not found: {path}</source>
+            <translation>找不到文件夹：{path}</translation>
+        </message>
+        <message>
+            <source>Select items to move first.</source>
+            <translation>请先选择要移动的项目。</translation>
+        </message>
+        <message>
+            <source>Cover Updated</source>
+            <translation>封面已更新</translation>
+        </message>
+        <message>
+            <source>Unable to set cover for the selected item.</source>
+            <translation>无法将所选项目设为封面。</translation>
+        </message>
+    </context>
+    <context>
+        <name>GalleryMenu</name>
+        <message>
+            <source>Copy</source>
+            <translation>复制</translation>
+        </message>
+        <message>
+            <source>Reveal in File Manager</source>
+            <translation>在文件管理器中显示</translation>
+        </message>
+        <message>
+            <source>Export</source>
+            <translation>导出</translation>
+        </message>
+        <message>
+            <source>Set as Cover</source>
+            <translation>设为封面</translation>
+        </message>
+        <message>
+            <source>Move to</source>
+            <translation>移动到</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>删除</translation>
+        </message>
+        <message>
+            <source>Restore</source>
+            <translation>恢复</translation>
+        </message>
+        <message>
+            <source>Paste</source>
+            <translation>粘贴</translation>
+        </message>
+        <message>
+            <source>Open Folder Location</source>
+            <translation>打开文件夹位置</translation>
+        </message>
+    </context>
 </TS>

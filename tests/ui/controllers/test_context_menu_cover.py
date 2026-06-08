@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtCore import QPoint, QModelIndex
+from PySide6.QtCore import QModelIndex, QPoint
 
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.gui.ui.controllers.context_menu_controller import ContextMenuController
@@ -96,8 +96,9 @@ def test_people_cluster_gallery_menu_shows_set_as_cover(mock_qmenu_cls) -> None:
     deps["facade"].library_manager = MagicMock(people_service=_StubPeopleService())
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_qmenu_cls.return_value.addAction.call_args_list]
-    assert "Set as Cover" in actions_added
+    mock_qmenu_cls.return_value.addAction.return_value.setData.assert_any_call(
+        "set_as_cover"
+    )
 
 
 @patch("iPhoto.gui.ui.controllers.context_menu_controller.QMenu")
@@ -126,8 +127,9 @@ def test_group_cluster_gallery_menu_shows_set_as_cover(mock_qmenu_cls) -> None:
     deps["facade"].library_manager = MagicMock(people_service=_StubPeopleService())
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_qmenu_cls.return_value.addAction.call_args_list]
-    assert "Set as Cover" in actions_added
+    mock_qmenu_cls.return_value.addAction.return_value.setData.assert_any_call(
+        "set_as_cover"
+    )
 
 
 @patch("iPhoto.gui.ui.controllers.context_menu_controller.QMenu")
@@ -162,8 +164,11 @@ def test_non_cover_gallery_menu_hides_set_as_cover(
 
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_qmenu_cls.return_value.addAction.call_args_list]
-    assert "Set as Cover" not in actions_added
+    action_ids = [
+        args[0]
+        for args, _kwargs in mock_qmenu_cls.return_value.addAction.return_value.setData.call_args_list
+    ]
+    assert "set_as_cover" not in action_ids
 
 
 def test_album_cover_uses_active_album_relative_path() -> None:
@@ -214,5 +219,8 @@ def test_people_cluster_gallery_menu_hides_cover_without_bound_service(mock_qmen
 
     controller._handle_context_menu(QPoint(10, 10))
 
-    actions_added = [args[0] for args, _ in mock_qmenu_cls.return_value.addAction.call_args_list]
-    assert "Set as Cover" not in actions_added
+    action_ids = [
+        args[0]
+        for args, _kwargs in mock_qmenu_cls.return_value.addAction.return_value.setData.call_args_list
+    ]
+    assert "set_as_cover" not in action_ids

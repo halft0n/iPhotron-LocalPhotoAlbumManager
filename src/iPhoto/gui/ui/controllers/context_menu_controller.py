@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
     QAbstractItemModel,
-    QMimeData,
     QItemSelectionModel,
+    QMimeData,
     QModelIndex,
     QObject,
     QPoint,
@@ -20,12 +20,13 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMenu
 
+from iPhoto.gui.i18n import tr
 from iPhoto.gui.ui.menus.core import MenuContext, populate_menu
 from iPhoto.gui.ui.menus.gallery_menu import GalleryMenuHandlers, gallery_action_specs
 from iPhoto.gui.ui.menus.style import apply_menu_style
-from ...services.people_service_resolver import resolve_people_service
 
 from ...facade import AppFacade
+from ...services.people_service_resolver import resolve_people_service
 from ..models.roles import Roles
 from ..widgets.asset_grid import AssetGrid
 from ..widgets.notification_toast import NotificationToast
@@ -120,7 +121,10 @@ class ContextMenuController(QObject):
 
         if self._navigation is not None and self._navigation.is_recently_deleted_view():
             self._status_bar.show_message(
-                "Items inside Recently Deleted cannot be deleted again.",
+                tr(
+                    "GalleryContextMenu",
+                    "Items inside Recently Deleted cannot be deleted again.",
+                ),
                 3000,
             )
             return False
@@ -131,7 +135,10 @@ class ContextMenuController(QObject):
         )
         paths = self._selected_asset_paths()
         if not paths:
-            self._status_bar.show_message("Select items to delete first.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Select items to delete first."),
+                3000,
+            )
             return False
 
         try:
@@ -149,7 +156,7 @@ class ContextMenuController(QObject):
             if self._selection_controller is not None:
                 self._selection_controller.set_selection_mode(False)
 
-        self._toast.show_toast("Deleted")
+        self._toast.show_toast(tr("GalleryContextMenu", "Deleted"))
         return True
 
     def _execute_restore(self) -> None:
@@ -161,7 +168,10 @@ class ContextMenuController(QObject):
         )
         paths = self._selected_asset_paths()
         if not paths:
-            self._status_bar.show_message("Select items to restore first.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Select items to restore first."),
+                3000,
+            )
             return
 
         try:
@@ -196,38 +206,49 @@ class ContextMenuController(QObject):
                     )
                 if not optimistic_applied:
                     self._remove_selection_rows(selected_indexes)
-            self._toast.show_toast("Restoring ...")
+            self._toast.show_toast(tr("GalleryContextMenu", "Restoring ..."))
 
     def _copy_selection_to_clipboard(self) -> None:
         """Copy the selected asset file paths into the system clipboard."""
 
         paths = self._selected_asset_paths()
         if not paths:
-            self._status_bar.show_message("Select items to copy first.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Select items to copy first."),
+                3000,
+            )
             return
         existing = [path for path in paths if path.exists()]
         if not existing:
             self._status_bar.show_message(
-                "Selected files are unavailable on disk.",
+                tr("GalleryContextMenu", "Selected files are unavailable on disk."),
                 3000,
             )
             return
         mime_data = QMimeData()
         mime_data.setUrls([QUrl.fromLocalFile(str(path)) for path in existing])
         QGuiApplication.clipboard().setMimeData(mime_data)
-        self._toast.show_toast("Copied to Clipboard")
+        self._toast.show_toast(tr("GalleryContextMenu", "Copied to Clipboard"))
 
     def _reveal_selection_in_file_manager(self) -> None:
         """Open the desktop file manager pointing to the first selected asset."""
 
         paths = self._selected_asset_paths()
         if not paths:
-            self._status_bar.show_message("Select items to reveal first.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Select items to reveal first."),
+                3000,
+            )
             return
 
         path = paths[0]
         if not path.exists():
-            self._status_bar.show_message(f"File not found: {path.name}", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "File not found: {filename}").format(
+                    filename=path.name
+                ),
+                3000,
+            )
             return
 
         # The command used to reveal a file varies per operating system. Each branch uses the
@@ -241,7 +262,9 @@ class ContextMenuController(QObject):
             subprocess.run(["xdg-open", str(path.parent)], check=False)
 
         self._status_bar.show_message(
-            f"Revealed {path.name} in file manager.",
+            tr("GalleryContextMenu", "Revealed {filename} in file manager.").format(
+                filename=path.name
+            ),
             3000,
         )
 
@@ -251,32 +274,44 @@ class ContextMenuController(QObject):
         clipboard = QGuiApplication.clipboard()
         mime_data = clipboard.mimeData()
         if not mime_data.hasUrls():
-            self._status_bar.show_message("No files to paste from clipboard.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "No files to paste from clipboard."),
+                3000,
+            )
             return
 
         files = [Path(url.toLocalFile()) for url in mime_data.urls()]
         album = self._facade.current_album
         if not album:
-            self._status_bar.show_message("Open an album before pasting files.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Open an album before pasting files."),
+                3000,
+            )
             return
 
         # Delegate importing to the facade so that all deduplication and bookkeeping logic is
         # reused. The toast provides quick feedback because importing can take a noticeable
         # amount of time on large selections.
         self._facade.import_files(files, destination=album.root)
-        self._toast.show_toast("Pasting files...")
+        self._toast.show_toast(tr("GalleryContextMenu", "Pasting files..."))
 
     def _open_current_folder(self) -> None:
         """Open the current album folder in the desktop file manager."""
 
         album = self._facade.current_album
         if not album:
-            self._status_bar.show_message("No album is currently open.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "No album is currently open."),
+                3000,
+            )
             return
 
         path = album.root
         if not path.exists():
-            self._status_bar.show_message(f"Folder not found: {path}", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Folder not found: {path}").format(path=path),
+                3000,
+            )
             return
 
         # The command mirrors the implementation in ``_reveal_selection_in_file_manager`` but we
@@ -297,7 +332,10 @@ class ContextMenuController(QObject):
         )
         paths = self._selected_asset_paths()
         if not paths:
-            self._status_bar.show_message("Select items to move first.", 3000)
+            self._status_bar.show_message(
+                tr("GalleryContextMenu", "Select items to move first."),
+                3000,
+            )
             return
 
         try:
@@ -490,10 +528,10 @@ class ContextMenuController(QObject):
                 )
 
         if success:
-            self._toast.show_toast("Cover Updated")
+            self._toast.show_toast(tr("GalleryContextMenu", "Cover Updated"))
             return
         self._status_bar.show_message(
-            "Unable to set cover for the selected item.",
+            tr("GalleryContextMenu", "Unable to set cover for the selected item."),
             3000,
         )
 
