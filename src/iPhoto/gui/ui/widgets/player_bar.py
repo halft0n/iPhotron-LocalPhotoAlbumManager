@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
+from ....gui.i18n import tr
 from ..icon import load_icon
 
 
@@ -36,7 +36,7 @@ class PlayerBar(QWidget):
         self._updating_position = False
         self._scrubbing = False
 
-        self._play_button = self._create_tool_button("▶", "Play/Pause")
+        self._play_button = self._create_tool_button("▶", tr("PlayerBar", "Play/Pause"))
         self._play_button.setCheckable(False)
 
         self._position_slider = QSlider(Qt.Orientation.Horizontal, self)
@@ -54,9 +54,9 @@ class PlayerBar(QWidget):
         self._volume_slider.setRange(0, 100)
         self._volume_slider.setValue(80)
         self._volume_slider.setFixedWidth(110)
-        self._volume_slider.setToolTip("Volume")
+        self._volume_slider.setToolTip(tr("PlayerBar", "Volume"))
 
-        self._mute_button = self._create_tool_button("🔇", "Mute", checkable=True)
+        self._mute_button = self._create_tool_button("🔇", tr("PlayerBar", "Mute"), checkable=True)
 
         self._play_icon: QIcon = load_icon("play.fill.svg")
         self._pause_icon: QIcon = load_icon("pause.fill.svg")
@@ -114,6 +114,11 @@ class PlayerBar(QWidget):
     # ------------------------------------------------------------------
     # UI update helpers
     # ------------------------------------------------------------------
+    def retranslate_ui(self) -> None:
+        self._play_button.setToolTip(tr("PlayerBar", "Play/Pause"))
+        self._volume_slider.setToolTip(tr("PlayerBar", "Volume"))
+        self._mute_button.setToolTip(tr("PlayerBar", "Mute"))
+
     def set_duration(self, duration_ms: int) -> None:
         """Update the displayed total duration."""
 

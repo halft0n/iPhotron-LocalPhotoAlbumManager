@@ -987,4 +987,66 @@
             <translation>打开文件夹位置</translation>
         </message>
     </context>
+    <context>
+        <name>DetailPage</name>
+        <message>
+            <source>Select a photo or video to preview.</source>
+            <translation>选择照片或视频进行预览。</translation>
+        </message>
+        <message>
+            <source>Edit</source>
+            <translation>编辑</translation>
+        </message>
+        <message>
+            <source>Return to grid view</source>
+            <translation>返回网格视图</translation>
+        </message>
+        <message>
+            <source>Zoom Out</source>
+            <translation>缩小</translation>
+        </message>
+        <message>
+            <source>Zoom</source>
+            <translation>缩放</translation>
+        </message>
+        <message>
+            <source>Zoom In</source>
+            <translation>放大</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>信息</translation>
+        </message>
+        <message>
+            <source>Share</source>
+            <translation>分享</translation>
+        </message>
+        <message>
+            <source>Add to Favorites</source>
+            <translation>添加到收藏</translation>
+        </message>
+        <message>
+            <source>Rotate Left</source>
+            <translation>向左旋转</translation>
+        </message>
+        <message>
+            <source>Rotate counter-clockwise</source>
+            <translation>逆时针旋转</translation>
+        </message>
+    </context>
+    <context>
+        <name>PlayerBar</name>
+        <message>
+            <source>Play/Pause</source>
+            <translation>播放/暂停</translation>
+        </message>
+        <message>
+            <source>Volume</source>
+            <translation>音量</translation>
+        </message>
+        <message>
+            <source>Mute</source>
+            <translation>静音</translation>
+        </message>
+    </context>
 </TS>

@@ -11,9 +11,10 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QStackedWidget, QWidget
 
 from ....application.ports import EditServicePort
-from ....gui.detail_profile import log_detail_profile
-from ....utils import image_loader
 from ....core.color_resolver import compute_color_statistics
+from ....gui.detail_profile import log_detail_profile
+from ....gui.i18n import tr
+from ....utils import image_loader
 from ..widgets.gl_image_viewer import GLImageViewer
 from ..widgets.live_badge import LiveBadge
 from ..widgets.video_area import VideoArea
@@ -131,9 +132,11 @@ class PlayerViewController(QObject):
         self._image_viewer = image_viewer
         self._video_area = video_area
         self._placeholder = placeholder
-        self._placeholder_default_text = (
-            placeholder.text() if isinstance(placeholder, QLabel) else None
-        )
+        self._placeholder_default_text = placeholder.text() if isinstance(placeholder, QLabel) else None
+        self._uses_standard_placeholder = self._placeholder_default_text in {
+            "Select a photo or video to preview.",
+            tr("DetailPage", "Select a photo or video to preview."),
+        }
         self._live_badge = live_badge
         self._edit_service_getter = edit_service_getter
         self._image_viewer_index = player_stack.indexOf(image_viewer)
@@ -161,6 +164,10 @@ class PlayerViewController(QObject):
     # ------------------------------------------------------------------
     # High-level surface selection helpers
     # ------------------------------------------------------------------
+    def _default_placeholder_text(self) -> str | None:
+        if self._uses_standard_placeholder:
+            return tr("DetailPage", "Select a photo or video to preview.")
+        return self._placeholder_default_text
 
     def _on_image_first_render(self) -> None:
         """Mark image viewer as initialised; hide cover if it is visible."""
@@ -200,7 +207,7 @@ class PlayerViewController(QObject):
         """Display the placeholder widget and clear any previous image."""
         if isinstance(self._placeholder, QLabel):
             self._placeholder.setText(
-                self._placeholder_default_text if message is None else message
+                self._default_placeholder_text() if message is None else message
             )
         self._video_area.hide_controls(animate=False)
         self.hide_live_badge()

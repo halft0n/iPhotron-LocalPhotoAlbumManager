@@ -987,4 +987,66 @@
             <translation>Ordnerposition öffnen</translation>
         </message>
     </context>
+    <context>
+        <name>DetailPage</name>
+        <message>
+            <source>Select a photo or video to preview.</source>
+            <translation>Wählen Sie ein Foto oder Video für die Vorschau aus.</translation>
+        </message>
+        <message>
+            <source>Edit</source>
+            <translation>Bearbeiten</translation>
+        </message>
+        <message>
+            <source>Return to grid view</source>
+            <translation>Zur Rasteransicht zurückkehren</translation>
+        </message>
+        <message>
+            <source>Zoom Out</source>
+            <translation>Verkleinern</translation>
+        </message>
+        <message>
+            <source>Zoom</source>
+            <translation>Zoom</translation>
+        </message>
+        <message>
+            <source>Zoom In</source>
+            <translation>Vergrößern</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>Info</translation>
+        </message>
+        <message>
+            <source>Share</source>
+            <translation>Teilen</translation>
+        </message>
+        <message>
+            <source>Add to Favorites</source>
+            <translation>Zu Favoriten hinzufügen</translation>
+        </message>
+        <message>
+            <source>Rotate Left</source>
+            <translation>Nach links drehen</translation>
+        </message>
+        <message>
+            <source>Rotate counter-clockwise</source>
+            <translation>Gegen den Uhrzeigersinn drehen</translation>
+        </message>
+    </context>
+    <context>
+        <name>PlayerBar</name>
+        <message>
+            <source>Play/Pause</source>
+            <translation>Wiedergabe/Pause</translation>
+        </message>
+        <message>
+            <source>Volume</source>
+            <translation>Lautstärke</translation>
+        </message>
+        <message>
+            <source>Mute</source>
+            <translation>Stummschalten</translation>
+        </message>
+    </context>
 </TS>

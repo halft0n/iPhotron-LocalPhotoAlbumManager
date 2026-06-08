@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,13 +12,14 @@ pytest.importorskip("PySide6.QtTest", reason="Qt test helpers not available", ex
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget, QWidget
 
 from iPhoto.gui.i18n import TranslationManager
 from iPhoto.gui.i18n.language import LanguageInfo
 from iPhoto.gui.ui.main_window import MainWindow
 from iPhoto.gui.ui.widgets.info_panel import InfoPanel
 from iPhoto.gui.ui.widgets.main_header import MainHeaderWidget
+from iPhoto.gui.ui.widgets.player_bar import PlayerBar
 from iPhoto.settings.manager import SettingsManager
 from iPhoto.settings.schema import merge_with_defaults, validate_settings
 
@@ -35,6 +37,38 @@ def _settings(tmp_path: Path) -> SettingsManager:
     manager = SettingsManager(path=tmp_path / "settings.json")
     manager.load()
     return manager
+
+
+class _RetranslateControl:
+    def setToolTip(self, _text: str) -> None:
+        pass
+
+    def setText(self, _text: str) -> None:
+        pass
+
+
+def _detail_page_retranslate_harness(placeholder_text: str, standard_text: str):
+    from iPhoto.gui.ui.widgets.detail_page import DetailPageWidget
+
+    widget = DetailPageWidget.__new__(DetailPageWidget)
+    control = _RetranslateControl()
+    widget.back_button = control
+    widget.zoom_out_button = control
+    widget.zoom_slider = control
+    widget.zoom_in_button = control
+    widget.info_button = control
+    widget.share_button = control
+    widget.favorite_button = control
+    widget.rotate_left_button = control
+    widget.edit_button = control
+    widget.edit_rotate_left_button = control
+    widget.player_bar = SimpleNamespace(retranslate_ui=lambda: None)
+    widget.player_stack = QStackedWidget()
+    widget.player_placeholder = QLabel(placeholder_text)
+    widget.player_stack.addWidget(widget.player_placeholder)
+    widget.player_stack.setCurrentWidget(widget.player_placeholder)
+    widget._placeholder_default_text = standard_text
+    return widget, DetailPageWidget
 
 
 def test_settings_language_default_and_schema() -> None:
@@ -72,6 +106,8 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
     assert QCoreApplication.translate("AlbumSidebar", "Pin Album", None) == "固定相册"
     assert QCoreApplication.translate("GalleryMenu", "Export", None) == "导出"
     assert QCoreApplication.translate("GalleryContextMenu", "Deleted", None) == "已删除"
+    assert QCoreApplication.translate("DetailPage", "Rotate Left", None) == "向左旋转"
+    assert QCoreApplication.translate("PlayerBar", "Volume", None) == "音量"
 
     panel = InfoPanel()
     try:
@@ -84,6 +120,55 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
         assert panel._location_editor.placeholderText() == "分配位置"
     finally:
         panel.close()
+
+    player_bar = PlayerBar()
+    try:
+        player_bar.retranslate_ui()
+
+        assert player_bar._volume_slider.toolTip() == "音量"
+        assert player_bar._mute_button.toolTip() == "静音"
+    finally:
+        player_bar.close()
+
+
+def test_detail_page_retranslate_updates_standard_placeholder_only(
+    monkeypatch,
+    qapp: QApplication,
+) -> None:
+    widget, detail_page_cls = _detail_page_retranslate_harness(
+        "Select a photo or video to preview.",
+        "Select a photo or video to preview.",
+    )
+    monkeypatch.setattr(
+        detail_page_cls,
+        "default_placeholder_text",
+        classmethod(lambda _cls: "Wählen Sie ein Foto oder Video aus."),
+    )
+
+    widget.retranslate_ui()
+
+    assert widget.player_placeholder.text() == "Wählen Sie ein Foto oder Video aus."
+    assert widget._placeholder_default_text == "Wählen Sie ein Foto oder Video aus."
+
+
+def test_detail_page_retranslate_preserves_custom_placeholder_message(
+    monkeypatch,
+    qapp: QApplication,
+) -> None:
+    widget, detail_page_cls = _detail_page_retranslate_harness(
+        "Writing data, please wait...",
+        "Select a photo or video to preview.",
+    )
+    monkeypatch.setattr(
+        detail_page_cls,
+        "default_placeholder_text",
+        classmethod(lambda _cls: "Wählen Sie ein Foto oder Video aus."),
+    )
+
+    widget.retranslate_ui()
+
+    assert widget.player_placeholder.text() == "Writing data, please wait..."
+    assert widget._placeholder_default_text == "Wählen Sie ein Foto oder Video aus."
 
 
 def test_translation_manager_falls_back_when_qm_is_missing(

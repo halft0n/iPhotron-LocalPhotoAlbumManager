@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ....gui.i18n import tr
 from ..icon import load_icon
 from ..palette import SIDEBAR_TEXT_COLOR, viewer_surface_color
 from .edit_sidebar import EditSidebar
-from .face_name_overlay import FaceNameOverlayWidget
 from .edit_topbar import SegmentedTopBar
+from .face_name_overlay import FaceNameOverlayWidget
 from .filmstrip_view import FilmstripView
 from .gl_image_viewer import GLImageViewer
 from .live_badge import LiveBadge
@@ -95,7 +96,7 @@ class DetailPageWidget(QWidget):
         self.favorite_button = QToolButton(self)
         self.favorite_button.setEnabled(False)
         self.rotate_left_button = QToolButton(self)
-        self.edit_button = QPushButton("Edit", self)
+        self.edit_button = QPushButton(tr("DetailPage", "Edit"), self)
         self.edit_button.setEnabled(False)
 
         self.zoom_widget = QWidget(self)
@@ -108,7 +109,8 @@ class DetailPageWidget(QWidget):
 
         # Viewer widgets -----------------------------------------------------
         self.player_stack = QStackedWidget(self)
-        self.player_placeholder = QLabel("Select a photo or video to preview.", self.player_stack)
+        self._placeholder_default_text = self.default_placeholder_text()
+        self.player_placeholder = QLabel(self._placeholder_default_text, self.player_stack)
         self.image_viewer = image_viewer or GLImageViewer()
         if self.image_viewer.parent() not in (None, self.player_stack):
             self.image_viewer.setParent(None)
@@ -144,6 +146,31 @@ class DetailPageWidget(QWidget):
         self._build_player_area()
         self._build_edit_container(main_window, layout)
         layout.addWidget(self.filmstrip_view)
+        self.retranslate_ui()
+
+    @classmethod
+    def default_placeholder_text(cls) -> str:
+        return tr("DetailPage", "Select a photo or video to preview.")
+
+    def retranslate_ui(self) -> None:
+        self.back_button.setToolTip(tr("DetailPage", "Return to grid view"))
+        self.zoom_out_button.setToolTip(tr("DetailPage", "Zoom Out"))
+        self.zoom_slider.setToolTip(tr("DetailPage", "Zoom"))
+        self.zoom_in_button.setToolTip(tr("DetailPage", "Zoom In"))
+        self.info_button.setToolTip(tr("DetailPage", "Info"))
+        self.share_button.setToolTip(tr("DetailPage", "Share"))
+        self.favorite_button.setToolTip(tr("DetailPage", "Add to Favorites"))
+        self.rotate_left_button.setToolTip(tr("DetailPage", "Rotate Left"))
+        self.edit_button.setText(tr("DetailPage", "Edit"))
+        self.edit_rotate_left_button.setToolTip(tr("DetailPage", "Rotate counter-clockwise"))
+        default_placeholder_text = self.default_placeholder_text()
+        if (
+            self.player_stack.currentWidget() is self.player_placeholder
+            and self.player_placeholder.text() == self._placeholder_default_text
+        ):
+            self.player_placeholder.setText(default_placeholder_text)
+        self._placeholder_default_text = default_placeholder_text
+        self.player_bar.retranslate_ui()
 
     def _build_header(self, main_window: QWidget, parent_layout: QVBoxLayout) -> None:
         """Create the header row containing navigation and metadata controls."""
