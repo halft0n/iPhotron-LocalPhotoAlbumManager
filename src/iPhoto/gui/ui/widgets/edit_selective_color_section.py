@@ -6,33 +6,34 @@ import logging
 from typing import Optional
 
 import numpy as np
-
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
-    QLinearGradient,
-    QFont,
 )
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QButtonGroup,
+    QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QPushButton,
-    QFrame,
-    QButtonGroup,
     QToolButton,
-    QGraphicsOpacityEffect,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ..models.edit_session import EditSession
-from ..icon import load_icon
+from iPhoto.gui.i18n import formatters, tr
+
 from ....core.selective_color_resolver import (
     DEFAULT_CENTERS,
     NUM_RANGES,
 )
+from ..icon import load_icon
+from ..models.edit_session import EditSession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +111,12 @@ class _SelectiveSlider(QWidget):
         self.set_colors(bg_start, bg_end, fill_neg, fill_pos)
         self.c_indicator = QColor(255, 255, 255)
 
+    def set_label(self, label: str) -> None:
+        """Update the label rendered inside the slider."""
+
+        self._name = label
+        self.update()
+
     def set_colors(
         self,
         bg_start: str,
@@ -176,7 +183,7 @@ class _SelectiveSlider(QWidget):
         painter.drawText(
             rect.adjusted(0, 0, -10, 0),
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-            f"{self._value:.2f}",
+            formatters.format_decimal(self._value, precision=2),
         )
 
         painter.setPen(QPen(self.c_indicator, 2))
@@ -282,6 +289,7 @@ class EditSelectiveColorSection(QWidget):
             "QToolButton:checked { background-color: #2d3b45; border: 1px solid #6aa2c8; }"
         )
         self._pipette_btn.clicked.connect(self._on_pipette_clicked)
+        self._pipette_btn.setToolTip(tr("EditSelectiveColor", "Pick color from image"))
         p_layout.addWidget(self._pipette_btn)
 
         colors_bg = QFrame()
@@ -307,11 +315,11 @@ class EditSelectiveColorSection(QWidget):
         layout.addLayout(tools_layout)
 
         # --- Sliders ---
-        self.slider_hue = _SelectiveSlider("Hue")
-        self.slider_sat = _SelectiveSlider("Saturation")
-        self.slider_lum = _SelectiveSlider("Luminance")
+        self.slider_hue = _SelectiveSlider(tr("EditSelectiveColor", "Hue"))
+        self.slider_sat = _SelectiveSlider(tr("EditSelectiveColor", "Saturation"))
+        self.slider_lum = _SelectiveSlider(tr("EditSelectiveColor", "Luminance"))
         self.slider_range = _SelectiveSlider(
-            "Range",
+            tr("EditSelectiveColor", "Range"),
             minimum=0,
             maximum=1.0,
             initial=0.5,
@@ -340,6 +348,15 @@ class EditSelectiveColorSection(QWidget):
         # Initialise first colour
         self.btn_group.button(0).setChecked(True)
         self._update_theme(0)
+
+    def retranslate_ui(self) -> None:
+        """Refresh visible labels and tooltips after a language change."""
+
+        self._pipette_btn.setToolTip(tr("EditSelectiveColor", "Pick color from image"))
+        self.slider_hue.set_label(tr("EditSelectiveColor", "Hue"))
+        self.slider_sat.set_label(tr("EditSelectiveColor", "Saturation"))
+        self.slider_lum.set_label(tr("EditSelectiveColor", "Luminance"))
+        self.slider_range.set_label(tr("EditSelectiveColor", "Range"))
 
     # ------------------------------------------------------------------
     # Session binding

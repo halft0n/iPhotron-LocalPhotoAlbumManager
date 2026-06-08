@@ -1,7 +1,7 @@
 # iPhotron 国际化阶段 1-3 交接文档
 
 > 日期：2026-06-08
-> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay 和 edit sidebar 首批控件迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移其余业务页面
+> 状态：阶段 1-2 已实现；阶段 3 已完成 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay、edit sidebar 首批控件和 edit sidebar 剩余 Apple Photos 对齐控件迁移；Python-aware 提取工具已补齐；待后续阶段继续迁移地图入口和其余业务页面
 > 对应指南：`docs/requirements/i18n/i18n_multilingual_architecture_guide.md`
 
 ---
@@ -10,7 +10,7 @@
 
 前序实施覆盖架构指南中的阶段 1「基础设施」和阶段 2「核心壳层 UI」。目标是先把国际化作为运行时服务接入应用，并让桌面主窗口的基础菜单、标题栏、核心操作和基础提示可以在运行时切换语言。
 
-本轮继续推进阶段 3「主要业务页面」，已完成 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay 和 edit sidebar 首批控件迁移，并补齐首个 locale-aware formatter helper。
+本轮继续推进阶段 3「主要业务页面」，已完成 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay、edit sidebar 首批控件和 edit sidebar 剩余 Apple Photos 对齐控件迁移，并补齐首个 locale-aware formatter helper。
 
 已完成内容：
 
@@ -81,7 +81,9 @@
   - `ExportController` 状态栏、toast、目录选择标题和基础错误提示已迁移；导出数量和错误详情使用 `{current}`、`{total}`、`{success}`、`{fail}`、`{error}` 占位符。
   - `FaceNameOverlayWidget` 默认未命名人脸、手动人脸命名 placeholder 和保存前校验 tooltip 已迁移；人物真实姓名、用户输入姓名和建议列表不翻译。
   - `EditSidebar` section 标题、Reset/Toggle tooltip 和首批 edit/crop 控件文案已迁移，并通过 `retranslate_ui()` 刷新 `CollapsibleSection` 标题、header control tooltip、Light/Color/Black & White slider label、Curve 通道/tooltip 和 Perspective/Aspect label。
-  - 本轮新增/补齐 edit 术语优先对齐 Apple 官方「照片/Fotos」使用手册命名：中文使用“光效、颜色、黑白、白平衡、曲线、色阶、清晰度、可选颜色、减少噪点、锐化、晕影、鲜明度、黑点、中性色调、颗粒、校正、宽高比、自由格式”；德文使用“Licht、Farbe、Schwarzweiß、Weißabgleich、Kurven、Tonwerte、Auflösung、Selektive Farbe、Bildrauschen reduzieren、Scharfzeichnen、Vignette、Brillanz、Schwarzpunkt、Neutraltöne、Körnung、Begradigen、Seitenverhältnis、Frei”。
+  - `EditSidebar` 剩余 Apple Photos 对齐控件已迁移：White Balance 模式/slider、Definition、Selective Color、Noise Reduction、Sharpen 和 Vignette 的可见 label/tooltip 支持运行时刷新。
+  - White Balance combo 逻辑已改为稳定 mode id，不再依赖翻译后的显示文本判断 `Neutral Gray`、`Skin Tone`、`Temperature/Tint` 模式。
+  - 本轮新增/补齐 edit 术语优先对齐 Apple 官方「照片/Fotos」支持文档命名，并新增 `docs/requirements/i18n/apple_photos_edit_glossary.md` 作为过程性术语表。中文使用“光效、颜色、黑白、白平衡、曲线、色阶、清晰度、可选颜色、减少噪点、锐化、晕影、鲜明度、黑点、中性、颗粒、校正、宽高比、自由格式、色温/色调、亮度、范围”；德文使用“Licht、Farbe、Schwarzweiß、Weißabgleich、Kurven、Tonwerte、Auflösung、Selektive Farbe、Bildrauschen reduzieren、Scharfzeichnen、Vignette、Brillanz、Schwarzpunkt、Neutraltöne、Körnung、Begradigen、Seitenverhältnis、Frei、Temperatur/Farbton、Leuchtkraft、Bereich”。
   - 继续不翻译文件名、路径、人物名、地点搜索结果、相机/镜头/codec 原始值等用户数据或技术原始值。
 
 ---
@@ -548,15 +550,81 @@ python -m ruff check --select I,F \
 All checks passed
 ```
 
+阶段 3 edit sidebar 剩余 Apple Photos 对齐控件迁移后工具链验证：
+
+```bash
+bash scripts/i18n_extract.sh
+```
+
+结果：
+
+```text
+Extracted 338 translation messages.
+```
+
+说明：338 是当前源码中已包裹翻译调用去重后的可提取 message 数；当前 `iPhoto_de.ts` 和 `iPhoto_zh_CN.ts` 各包含 338 条 message，0 条 unfinished。本轮新增 `docs/requirements/i18n/apple_photos_edit_glossary.md`，并按 Apple 官方「照片/Fotos」支持文档补齐 edit 剩余控件译法。
+
+```bash
+bash scripts/i18n_compile.sh
+```
+
+结果：
+
+```text
+Generated 338 translation(s) (338 finished and 0 unfinished)
+Generated 338 translation(s) (338 finished and 0 unfinished)
+```
+
+本轮 edit sidebar/i18n 目标回归：
+
+```bash
+QT_QPA_PLATFORM=offscreen pytest tests/ui/widgets/test_edit_sidebar.py \
+  tests/test_i18n_translation_manager.py \
+  tests/test_i18n_extract_tool.py -q
+```
+
+结果：
+
+```text
+20 passed, 1 warning
+```
+
+说明：warning 为仓库既有 `pytest.ini` 中 `env` 配置未被当前 pytest 识别。未设置 `QT_QPA_PLATFORM=offscreen` 时，当前无显示环境会在创建 `QApplication` 时 abort；本轮以 offscreen 模式完成 Qt widget 目标回归。
+
+本轮窄范围静态检查：
+
+```bash
+python -m ruff check --select I,F \
+  src/iPhoto/gui/ui/widgets/edit_strip.py \
+  src/iPhoto/gui/ui/widgets/wb_sliders.py \
+  src/iPhoto/gui/ui/widgets/edit_wb_section.py \
+  src/iPhoto/gui/ui/widgets/edit_selective_color_section.py \
+  src/iPhoto/gui/ui/widgets/edit_definition_section.py \
+  src/iPhoto/gui/ui/widgets/edit_denoise_section.py \
+  src/iPhoto/gui/ui/widgets/edit_sharpen_section.py \
+  src/iPhoto/gui/ui/widgets/edit_vignette_section.py \
+  tests/ui/widgets/test_edit_sidebar.py \
+  tests/test_i18n_translation_manager.py \
+  tests/test_i18n_extract_tool.py
+```
+
+结果：
+
+```text
+All checks passed
+```
+
+说明：ruff 仍提示仓库顶层 linter 配置项迁移 warning，这是既有 `pyproject.toml` 配置风格问题，不影响本轮检查结果。
+
 ---
 
 ## 3. 已知限制
 
-当前完成的是核心壳层国际化，以及 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay 和 edit sidebar 首批控件迁移，不是全应用文案迁移。
+当前完成的是核心壳层国际化，以及 `InfoPanel`、People Dashboard、相册导航面、gallery context menu、detail/player 控制区、share/export 首批反馈、face overlay、edit sidebar 首批控件和 edit sidebar 剩余 Apple Photos 对齐控件迁移，不是全应用文案迁移。
 
 仍未完成的主要区域：
 
-- edit sidebar 剩余子组件、edit preview/fullscreen/history/zoom 相关 controller、部分 detail/edit 子组件中仍有 tooltip、按钮、状态文案未完整迁移。
+- edit preview/fullscreen/history/zoom 相关 controller、部分 detail/edit 子组件中仍有 tooltip、按钮、状态文案未完整迁移。
 - `src/maps/main.py` 独立地图预览入口未迁移。
 - `tools/check_i18n_strings.py` 硬编码文案门禁尚未实现。
 - locale-aware formatter 已具备日期时间、整数、小数和文件大小能力，但百分比、复数和更完整的 domain-specific 格式化仍未系统接入。

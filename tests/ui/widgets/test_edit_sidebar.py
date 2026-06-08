@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from iPhoto.gui.ui.widgets.edit_bw_section import EditBWSection
 from iPhoto.gui.ui.widgets.edit_sidebar import EditSidebar
+from iPhoto.gui.ui.widgets.edit_wb_section import EditWBSection
 
 
 @pytest.fixture(scope="module")
@@ -77,3 +78,19 @@ def test_bw_video_mode_keeps_flat_slider_group_when_unbound(qapp) -> None:
     assert section.master_slider.isHidden() is True
     assert section.options_section.header_visible() is False
     assert section.options_section.is_expanded() is True
+
+
+def test_wb_mode_ids_survive_retranslate(qapp) -> None:
+    """White-balance mode logic must not depend on translated combo text."""
+
+    section = EditWBSection()
+
+    section._combo.setCurrentIndex(2)
+    section.retranslate_ui()
+
+    assert section._combo.currentData() == "temperature_tint"
+    assert section._current_mode == "temperature_tint"
+    assert section._combo.itemData(0) == "neutral_gray"
+    assert section._combo.itemData(1) == "skin_tone"
+    assert section._combo.itemData(2) == "temperature_tint"
+    assert section._combo.itemText(2) == "Temperature/Tint"

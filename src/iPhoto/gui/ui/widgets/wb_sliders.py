@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from iPhoto.gui.i18n import formatters, tr
+
 from ..icon import load_icon
 
 
@@ -126,6 +128,7 @@ class _WarmthSlider(QWidget):
         self._dragging = False
         self.setFixedHeight(34)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._label = tr("EditWB", "Warmth")
 
         self.c_blue_track = QColor(44, 62, 74)
         self.c_orange_track = QColor(74, 62, 32)
@@ -145,6 +148,12 @@ class _WarmthSlider(QWidget):
     def normalizedValue(self) -> float:
         """Return current value mapped to ``[-1, 1]``."""
         return self._value / 100.0
+
+    def set_label(self, label: str) -> None:
+        """Update the label rendered inside the slider."""
+
+        self._label = label
+        self.update()
 
     # -- painting --
     def paintEvent(self, _):  # type: ignore[override]
@@ -180,9 +189,17 @@ class _WarmthSlider(QWidget):
         font = QFont("Inter", 12, QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(QColor(240, 240, 240))
-        painter.drawText(QRectF(rect).adjusted(12, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "Warmth")
+        painter.drawText(
+            QRectF(rect).adjusted(12, 0, 0, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self._label,
+        )
         painter.setPen(QColor(255, 255, 255, 160))
-        painter.drawText(QRectF(rect).adjusted(0, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, str(int(self._value)))
+        painter.drawText(
+            QRectF(rect).adjusted(0, 0, -12, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            formatters.format_integer(int(self._value)),
+        )
 
         handle_x = self._norm() * rect.width()
         painter.setPen(QPen(self.c_indicator, 2))
@@ -238,6 +255,7 @@ class _TemperatureSlider(QWidget):
         self._dragging = False
         self.setFixedHeight(34)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._label = tr("EditWB", "Temperature")
 
         self.c_blue = QColor(44, 62, 74)
         self.c_orange = QColor(94, 72, 32)
@@ -259,6 +277,12 @@ class _TemperatureSlider(QWidget):
         half = (self.KELVIN_MAX - self.KELVIN_MIN) / 2.0
         centre = (self.KELVIN_MAX + self.KELVIN_MIN) / 2.0
         return (self._value - centre) / half
+
+    def set_label(self, label: str) -> None:
+        """Update the label rendered inside the slider."""
+
+        self._label = label
+        self.update()
 
     # -- painting --
     def paintEvent(self, _):  # type: ignore[override]
@@ -292,9 +316,17 @@ class _TemperatureSlider(QWidget):
         font = QFont("Inter", 12, QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(QColor(220, 220, 220))
-        painter.drawText(QRectF(rect).adjusted(12, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "Temperature")
+        painter.drawText(
+            QRectF(rect).adjusted(12, 0, 0, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self._label,
+        )
         painter.setPen(QColor(200, 200, 200, 180))
-        painter.drawText(QRectF(rect).adjusted(0, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{int(self._value):,}")
+        painter.drawText(
+            QRectF(rect).adjusted(0, 0, -12, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            formatters.format_integer(int(self._value)),
+        )
 
         painter.setPen(QPen(self.c_indicator, 2))
         painter.drawLine(QPointF(curr_x, 0), QPointF(curr_x, rect.bottom()))
@@ -350,6 +382,7 @@ class _TintSlider(QWidget):
         self._dragging = False
         self.setFixedHeight(34)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self._label = tr("EditWB", "Tint")
 
         self.c_green = QColor(44, 74, 54)
         self.c_magenta = QColor(84, 44, 84)
@@ -369,6 +402,12 @@ class _TintSlider(QWidget):
     def normalizedValue(self) -> float:
         """Return current value mapped to ``[-1, 1]``."""
         return self._value / 100.0
+
+    def set_label(self, label: str) -> None:
+        """Update the label rendered inside the slider."""
+
+        self._label = label
+        self.update()
 
     # -- painting --
     def paintEvent(self, _):  # type: ignore[override]
@@ -403,9 +442,13 @@ class _TintSlider(QWidget):
         font = QFont("Inter", 12, QFont.Weight.Medium)
         painter.setFont(font)
         painter.setPen(QColor(220, 220, 220))
-        painter.drawText(QRectF(rect).adjusted(12, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "Tint")
+        painter.drawText(
+            QRectF(rect).adjusted(12, 0, 0, 0),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self._label,
+        )
         painter.setPen(QColor(200, 200, 200, 180))
-        val_str = f"{self._value:.2f}"
+        val_str = formatters.format_decimal(self._value, precision=2)
         painter.drawText(QRectF(rect).adjusted(0, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, val_str)
 
         handle_x = self._norm() * rect.width()

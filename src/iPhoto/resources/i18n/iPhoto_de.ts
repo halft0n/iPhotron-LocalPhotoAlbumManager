@@ -1248,7 +1248,7 @@
         </message>
         <message>
             <source>Highlights</source>
-            <translation>Glanzlichter</translation>
+            <translation>Lichter</translation>
         </message>
         <message>
             <source>Shadows</source>
@@ -1333,11 +1333,109 @@
         </message>
         <message>
             <source>Tone</source>
-            <translation>Farbton</translation>
+            <translation>Ton</translation>
         </message>
         <message>
             <source>Grain</source>
             <translation>Körnung</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditDefinition</name>
+        <message>
+            <source>Definition</source>
+            <translation>Auflösung</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditDenoise</name>
+        <message>
+            <source>Amount</source>
+            <translation>Stärke</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditSelectiveColor</name>
+        <message>
+            <source>Pick color from image</source>
+            <translation>Farbe aus Bild auswählen</translation>
+        </message>
+        <message>
+            <source>Hue</source>
+            <translation>Farbton</translation>
+        </message>
+        <message>
+            <source>Saturation</source>
+            <translation>Sättigung</translation>
+        </message>
+        <message>
+            <source>Luminance</source>
+            <translation>Leuchtkraft</translation>
+        </message>
+        <message>
+            <source>Range</source>
+            <translation>Bereich</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditSharpen</name>
+        <message>
+            <source>Intensity</source>
+            <translation>Intensität</translation>
+        </message>
+        <message>
+            <source>Edges</source>
+            <translation>Kanten</translation>
+        </message>
+        <message>
+            <source>Falloff</source>
+            <translation>Abnahme</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditVignette</name>
+        <message>
+            <source>Strength</source>
+            <translation>Stärke</translation>
+        </message>
+        <message>
+            <source>Radius</source>
+            <translation>Radius</translation>
+        </message>
+        <message>
+            <source>Softness</source>
+            <translation>Weichheit</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditWB</name>
+        <message>
+            <source>Pick white balance from image</source>
+            <translation>Weißabgleich im Bild auswählen</translation>
+        </message>
+        <message>
+            <source>Warmth</source>
+            <translation>Wärme</translation>
+        </message>
+        <message>
+            <source>Temperature</source>
+            <translation>Temperatur</translation>
+        </message>
+        <message>
+            <source>Tint</source>
+            <translation>Farbton</translation>
+        </message>
+        <message>
+            <source>Neutral Gray</source>
+            <translation>Neutrales Grau</translation>
+        </message>
+        <message>
+            <source>Skin Tone</source>
+            <translation>Hautton</translation>
+        </message>
+        <message>
+            <source>Temperature/Tint</source>
+            <translation>Temperatur/Farbton</translation>
         </message>
     </context>
 </TS>

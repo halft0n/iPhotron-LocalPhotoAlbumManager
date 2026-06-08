@@ -7,6 +7,8 @@ from typing import Optional
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from iPhoto.gui.i18n import tr
+
 from ..models.edit_session import EditSession
 from .edit_strip import BWSlider
 
@@ -35,7 +37,7 @@ class EditSharpenSection(QWidget):
         layout.setSpacing(8)
 
         self._intensity_slider = BWSlider(
-            "Intensity",
+            tr("EditSharpen", "Intensity"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -44,7 +46,7 @@ class EditSharpenSection(QWidget):
         layout.addWidget(self._intensity_slider)
 
         self._edges_slider = BWSlider(
-            "Edges",
+            tr("EditSharpen", "Edges"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -53,7 +55,7 @@ class EditSharpenSection(QWidget):
         layout.addWidget(self._edges_slider)
 
         self._falloff_slider = BWSlider(
-            "Falloff",
+            tr("EditSharpen", "Falloff"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -66,6 +68,13 @@ class EditSharpenSection(QWidget):
             slider.valueChanged.connect(self._on_slider_changed)
             slider.interactionStarted.connect(self.interactionStarted)
             slider.interactionFinished.connect(self._on_slider_interaction_finished)
+
+    def retranslate_ui(self) -> None:
+        """Refresh visible labels after a language change."""
+
+        self._intensity_slider.setName(tr("EditSharpen", "Intensity"))
+        self._edges_slider.setName(tr("EditSharpen", "Edges"))
+        self._falloff_slider.setName(tr("EditSharpen", "Falloff"))
 
     # ------------------------------------------------------------------
     # Session binding

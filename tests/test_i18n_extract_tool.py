@@ -20,6 +20,18 @@ def _message_sources(ts_file: Path) -> set[str]:
     return {source.text or "" for source in root.findall(".//message/source")}
 
 
+def _translations_for_context(ts_file: Path, context_name: str) -> dict[str, str]:
+    root = ET.parse(ts_file).getroot()
+    for context in root.findall(".//context"):
+        if context.findtext("name") != context_name:
+            continue
+        return {
+            message.findtext("source") or "": message.findtext("translation") or ""
+            for message in context.findall("message")
+        }
+    return {}
+
+
 def test_extracts_qcore_translate_and_project_tr_calls(tmp_path: Path) -> None:
     source = tmp_path / "src" / "widget.py"
     _write_source(
@@ -215,3 +227,22 @@ def test_update_ts_adds_comment_and_numerus_metadata(tmp_path: Path) -> None:
     assert message.get("numerus") == "yes"
     assert message.findtext("comment") == "Selection count"
     assert _message_sources(ts_file) == {"%n item(s) selected"}
+
+
+def test_apple_photos_edit_terms_are_translated() -> None:
+    """Edit translations should follow the Apple Photos support terminology."""
+
+    i18n_dir = Path(__file__).parent.parent / "src" / "iPhoto" / "resources" / "i18n"
+    zh_terms = _translations_for_context(i18n_dir / "iPhoto_zh_CN.ts", "EditSelectiveColor")
+    de_terms = _translations_for_context(i18n_dir / "iPhoto_de.ts", "EditSelectiveColor")
+    zh_wb_terms = _translations_for_context(i18n_dir / "iPhoto_zh_CN.ts", "EditWB")
+    de_wb_terms = _translations_for_context(i18n_dir / "iPhoto_de.ts", "EditWB")
+
+    assert zh_terms["Hue"] == "色调"
+    assert zh_terms["Luminance"] == "亮度"
+    assert de_terms["Hue"] == "Farbton"
+    assert de_terms["Luminance"] == "Leuchtkraft"
+    assert zh_wb_terms["Neutral Gray"] == "中性灰色"
+    assert zh_wb_terms["Temperature/Tint"] == "色温/色调"
+    assert de_wb_terms["Neutral Gray"] == "Neutrales Grau"
+    assert de_wb_terms["Temperature/Tint"] == "Temperatur/Farbton"

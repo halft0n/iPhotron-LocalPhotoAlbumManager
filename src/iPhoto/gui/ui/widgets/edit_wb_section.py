@@ -11,13 +11,15 @@ import logging
 from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QSignalBlocker, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
+
+from iPhoto.gui.i18n import tr
 
 from ....core.wb_resolver import WBParams
 from ..models.edit_session import EditSession
@@ -32,9 +34,10 @@ from .wb_sliders import (
 _LOGGER = logging.getLogger(__name__)
 
 # Mode identifiers matching the demo combo-box items.
-_MODE_NEUTRAL = "Neutral Gray"
-_MODE_SKIN = "Skin Tone"
-_MODE_TEMP_TINT = "Temp & Tint"
+_MODE_NEUTRAL = "neutral_gray"
+_MODE_SKIN = "skin_tone"
+_MODE_TEMP_TINT = "temperature_tint"
+_MODE_ORDER = (_MODE_NEUTRAL, _MODE_SKIN, _MODE_TEMP_TINT)
 
 
 class EditWBSection(QWidget):
@@ -72,8 +75,9 @@ class EditWBSection(QWidget):
         tool_row.addWidget(self._pipette)
 
         self._combo = _StyledComboBox(self)
-        self._combo.addItems([_MODE_NEUTRAL, _MODE_SKIN, _MODE_TEMP_TINT])
-        self._combo.currentTextChanged.connect(self._on_mode_changed)
+        for mode in _MODE_ORDER:
+            self._combo.addItem(_mode_label(mode), mode)
+        self._combo.currentIndexChanged.connect(self._on_mode_changed)
         tool_row.addWidget(self._combo, 1)
         layout.addLayout(tool_row)
 
@@ -107,6 +111,23 @@ class EditWBSection(QWidget):
         self._opacity_effect = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self._opacity_effect)
         self._opacity_effect.setOpacity(1.0)
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        """Refresh visible labels after a language change."""
+
+        current_mode = self._current_mode
+        with QSignalBlocker(self._combo):
+            for index, mode in enumerate(_MODE_ORDER):
+                self._combo.setItemText(index, _mode_label(mode))
+        index = self._combo.findData(current_mode)
+        if index >= 0 and index != self._combo.currentIndex():
+            with QSignalBlocker(self._combo):
+                self._combo.setCurrentIndex(index)
+        self._pipette.setToolTip(tr("EditWB", "Pick white balance from image"))
+        self._warmth_slider.set_label(tr("EditWB", "Warmth"))
+        self._temp_slider.set_label(tr("EditWB", "Temperature"))
+        self._tint_slider.set_label(tr("EditWB", "Tint"))
 
     # ------------------------------------------------------------------
     # Session binding
@@ -287,9 +308,12 @@ class EditWBSection(QWidget):
             return
         self.wbParamsCommitted.emit(self._gather_params())
 
-    def _on_mode_changed(self, text: str) -> None:
-        self._current_mode = text
-        is_temp_tint = text == _MODE_TEMP_TINT
+    def _on_mode_changed(self, _index: int) -> None:
+        mode = self._combo.currentData()
+        if mode not in _MODE_ORDER:
+            mode = _MODE_NEUTRAL
+        self._current_mode = str(mode)
+        is_temp_tint = self._current_mode == _MODE_TEMP_TINT
         self._warmth_slider.setVisible(not is_temp_tint)
         self._temp_slider.setVisible(is_temp_tint)
         self._tint_slider.setVisible(is_temp_tint)
@@ -327,3 +351,13 @@ class EditWBSection(QWidget):
 
 
 __all__ = ["EditWBSection"]
+
+
+def _mode_label(mode: str) -> str:
+    if mode == _MODE_NEUTRAL:
+        return tr("EditWB", "Neutral Gray")
+    if mode == _MODE_SKIN:
+        return tr("EditWB", "Skin Tone")
+    if mode == _MODE_TEMP_TINT:
+        return tr("EditWB", "Temperature/Tint")
+    return mode

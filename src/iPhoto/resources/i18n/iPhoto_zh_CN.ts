@@ -1329,7 +1329,7 @@
         </message>
         <message>
             <source>Neutrals</source>
-            <translation>中性色调</translation>
+            <translation>中性</translation>
         </message>
         <message>
             <source>Tone</source>
@@ -1338,6 +1338,104 @@
         <message>
             <source>Grain</source>
             <translation>颗粒</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditDefinition</name>
+        <message>
+            <source>Definition</source>
+            <translation>清晰度</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditDenoise</name>
+        <message>
+            <source>Amount</source>
+            <translation>强度</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditSelectiveColor</name>
+        <message>
+            <source>Pick color from image</source>
+            <translation>从图像中选取颜色</translation>
+        </message>
+        <message>
+            <source>Hue</source>
+            <translation>色调</translation>
+        </message>
+        <message>
+            <source>Saturation</source>
+            <translation>饱和度</translation>
+        </message>
+        <message>
+            <source>Luminance</source>
+            <translation>亮度</translation>
+        </message>
+        <message>
+            <source>Range</source>
+            <translation>范围</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditSharpen</name>
+        <message>
+            <source>Intensity</source>
+            <translation>强度</translation>
+        </message>
+        <message>
+            <source>Edges</source>
+            <translation>边缘</translation>
+        </message>
+        <message>
+            <source>Falloff</source>
+            <translation>衰减</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditVignette</name>
+        <message>
+            <source>Strength</source>
+            <translation>强度</translation>
+        </message>
+        <message>
+            <source>Radius</source>
+            <translation>半径</translation>
+        </message>
+        <message>
+            <source>Softness</source>
+            <translation>柔和度</translation>
+        </message>
+    </context>
+    <context>
+        <name>EditWB</name>
+        <message>
+            <source>Pick white balance from image</source>
+            <translation>从图像中选取白平衡</translation>
+        </message>
+        <message>
+            <source>Warmth</source>
+            <translation>暖度</translation>
+        </message>
+        <message>
+            <source>Temperature</source>
+            <translation>色温</translation>
+        </message>
+        <message>
+            <source>Tint</source>
+            <translation>色调</translation>
+        </message>
+        <message>
+            <source>Neutral Gray</source>
+            <translation>中性灰色</translation>
+        </message>
+        <message>
+            <source>Skin Tone</source>
+            <translation>肤色</translation>
+        </message>
+        <message>
+            <source>Temperature/Tint</source>
+            <translation>色温/色调</translation>
         </message>
     </context>
 </TS>
