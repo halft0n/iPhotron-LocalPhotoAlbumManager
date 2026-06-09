@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Set, cast
+import math
+from collections.abc import Iterable
+from typing import cast
 
-from PySide6.QtCore import QObject, QEvent, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
-    QFontMetrics,
+    QFontMetricsF,
     QGuiApplication,
-    QPalette,
     QHelpEvent,
     QPainter,
     QPainterPath,
     QPaintEvent,
+    QPalette,
     QPen,
 )
 from PySide6.QtWidgets import QWidget
 
-
-_HIDE_EVENTS: Set[QEvent.Type] = {
+_HIDE_EVENTS: set[QEvent.Type] = {
     QEvent.Type.Leave,
     QEvent.Type.Hide,
     QEvent.Type.FocusOut,
@@ -30,6 +31,13 @@ _HIDE_EVENTS: Set[QEvent.Type] = {
     QEvent.Type.KeyPress,
     QEvent.Type.Close,
 }
+
+_TEXT_FLAGS = (
+    Qt.AlignmentFlag.AlignLeft
+    | Qt.AlignmentFlag.AlignTop
+    | Qt.TextFlag.TextWordWrap
+    | Qt.TextFlag.TextWrapAnywhere
+)
 
 
 class FloatingToolTip(QWidget):
@@ -126,24 +134,17 @@ class FloatingToolTip(QWidget):
             edge = 2 * (self._padding + self._border_width)
             return QSize(edge, edge)
 
-        metrics = QFontMetrics(self._font)
-        available_width = max(0, self._MAX_WIDTH - 2 * self._padding)
+        metrics = QFontMetricsF(self._font, self)
+        text_inset = self._text_inset()
+        available_width = max(0.0, float(self._MAX_WIDTH) - 2.0 * text_inset)
         text_rect = metrics.boundingRect(
-            QRect(0, 0, available_width, 0),
-            Qt.AlignmentFlag.AlignLeft
-            | Qt.AlignmentFlag.AlignTop
-            | Qt.TextFlag.TextWordWrap,
+            QRectF(0.0, 0.0, available_width, 10000.0),
+            _TEXT_FLAGS,
             self._last_text,
         )
-        # Clamp the preferred width so extremely long words do not push the
-        # popup beyond the maximum width budget.  ``boundingRect`` may report a
-        # width that equals ``available_width`` when wrapping occurs, therefore
-        # ``max`` maintains the configured padding even when the text fits on a
-        # single line.
-        width = min(text_rect.width(), available_width) + 2 * (
-            self._padding + self._border_width
-        )
-        height = text_rect.height() + 2 * (self._padding + self._border_width)
+        text_width = min(max(0.0, text_rect.width()), available_width)
+        width = math.ceil(text_width + 2.0 * text_inset)
+        height = math.ceil(max(0.0, text_rect.height()) + 2.0 * text_inset)
         return QSize(width, height)
 
     def minimumSizeHint(self) -> QSize:  # noqa: D401 - mirrors :meth:`sizeHint`
@@ -158,11 +159,6 @@ class FloatingToolTip(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         outer_rect = QRectF(self.rect())
-        # The outer radius matches the requested corner rounding but is clamped
-        # so extremely small frames do not attempt to draw impossible curves.
-        outer_radius = min(
-            self._corner_radius, outer_rect.width() / 2.0, outer_rect.height() / 2.0
-        )
 
         # Step 1: paint the full rounded rectangle with the background colour.
         # Drawing the fill first ensures any anti-aliased edge pixels blend with
@@ -190,22 +186,20 @@ class FloatingToolTip(QWidget):
         if self._last_text:
             painter.setFont(self._font)
             painter.setPen(self._text_colour)
-            text_inset = self._padding + self._border_width
-            text_rect = QRectF(paint_rect).adjusted(
-                text_inset,
-                text_inset,
-                -text_inset,
-                -text_inset,
-            )
-            painter.drawText(
-                text_rect,
-                Qt.AlignmentFlag.AlignLeft
-                | Qt.AlignmentFlag.AlignTop
-                | Qt.TextFlag.TextWordWrap,
-                self._last_text,
-            )
+            painter.drawText(self._text_rect(), _TEXT_FLAGS, self._last_text)
 
         painter.end()
+
+    def _text_inset(self) -> float:
+        """Return the distance between the widget edge and painted text."""
+
+        return float(self._padding + self._border_width)
+
+    def _text_rect(self) -> QRectF:
+        """Return the text drawing rect used by both layout tests and painting."""
+
+        text_inset = self._text_inset()
+        return QRectF(self.rect()).adjusted(text_inset, text_inset, -text_inset, -text_inset)
 
     def show_tooltip(self, global_pos: QPoint, text: str) -> None:
         """Display *text* near *global_pos* while keeping the popup on screen."""
@@ -265,7 +259,7 @@ class ToolTipEventFilter(QObject):
         # widget itself must be ignored or Qt will immediately re-enter the
         # filter when it receives synthetic events such as ``Leave`` while
         # hiding the popup.
-        self._ignored_ids: Set[int] = {id(tooltip)}
+        self._ignored_ids: set[int] = {id(tooltip)}
 
     def ignore_object(self, obj: QObject) -> None:
         """Exclude *obj* from tooltip interception logic."""
@@ -289,8 +283,8 @@ class ToolTipEventFilter(QObject):
             help_event = cast(QHelpEvent, event)
 
             # ``QHelpEvent`` gained ``text()`` in newer Qt releases, however
-            # several PySide6 builds – including the version bundled with the
-            # project – omit the accessor.  Query the attribute defensively so
+            # several PySide6 builds - including the version bundled with the
+            # project - omit the accessor.  Query the attribute defensively so
             # the event filter remains compatible with runtimes that expose the
             # data exclusively through ``QWidget.toolTip``.
             text_getter = getattr(help_event, "text", None)
