@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -993,11 +994,6 @@ class PlaybackCoordinator(QObject):
         self._ensure_info_panel_metadata_state()
         capabilities = self._map_runtime_capabilities()
         location_enabled = self._refresh_location_extension_state()
-        self._info_panel.set_location_capability(
-            enabled=location_enabled,
-            preview_enabled=self._info_panel_preview_enabled(capabilities, location_enabled=location_enabled),
-            fallback_text=_LOCATION_EXTENSION_PROMPT,
-        )
         local_info = dict(info)
         abs_path = local_info.get("abs")
         path_key = self._info_panel_path_key(abs_path)
@@ -1034,15 +1030,21 @@ class PlaybackCoordinator(QObject):
             local_info["_metadata_loading"] = True
         else:
             local_info.pop("_metadata_loading", None)
-        self._info_panel.set_asset_metadata(local_info)
-        location_assign_path = getattr(self, "_location_assign_path", None)
-        self._info_panel.set_location_busy(
-            bool(getattr(self, "_location_assign_inflight", False))
-            and location_assign_path is not None
-            and current_path == location_assign_path
-        )
-        presentation = getattr(self, "_current_presentation", None)
-        self._refresh_info_panel_faces(presentation.asset_id if presentation is not None else None)
+        with self._info_panel_content_update():
+            self._info_panel.set_location_capability(
+                enabled=location_enabled,
+                preview_enabled=self._info_panel_preview_enabled(capabilities, location_enabled=location_enabled),
+                fallback_text=_LOCATION_EXTENSION_PROMPT,
+            )
+            self._info_panel.set_asset_metadata(local_info)
+            location_assign_path = getattr(self, "_location_assign_path", None)
+            self._info_panel.set_location_busy(
+                bool(getattr(self, "_location_assign_inflight", False))
+                and location_assign_path is not None
+                and current_path == location_assign_path
+            )
+            presentation = getattr(self, "_current_presentation", None)
+            self._refresh_info_panel_faces(presentation.asset_id if presentation is not None else None)
         if should_queue_enrichment:
             self._queue_info_panel_metadata_enrichment(
                 Path(path_key),
@@ -1812,8 +1814,18 @@ class PlaybackCoordinator(QObject):
         if presentation is None or presentation.path != result.path:
             return
         local_info = self._merge_info_panel_metadata(presentation.info, result.metadata)
-        self._info_panel.set_asset_metadata(local_info)
-        self._refresh_info_panel_faces(presentation.asset_id)
+        with self._info_panel_content_update():
+            self._info_panel.set_asset_metadata(local_info)
+            self._refresh_info_panel_faces(presentation.asset_id)
+
+    def _info_panel_content_update(self):
+        info_panel = getattr(self, "_info_panel", None)
+        content_update = getattr(info_panel, "content_update", None)
+        if callable(content_update):
+            context = content_update()
+            if hasattr(context, "__enter__") and hasattr(context, "__exit__"):
+                return context
+        return nullcontext()
 
     @Slot(str, str)
     def _handle_info_panel_metadata_error(self, path_key: str, message: str) -> None:

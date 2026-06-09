@@ -486,6 +486,7 @@ def test_info_panel_face_add_button_stays_visible_across_rebuilds(qapp: QApplica
 
     panel.set_asset_faces([])
     assert panel._face_add_button.isHidden() is False
+    assert panel._face_layout.indexOf(panel._face_add_button) >= 0
 
     panel.set_asset_metadata(
         {
@@ -498,6 +499,7 @@ def test_info_panel_face_add_button_stays_visible_across_rebuilds(qapp: QApplica
 
     assert panel._face_add_button.isHidden() is False
     assert panel._face_add_button.parent() is panel._face_container
+    assert panel._face_layout.indexOf(panel._face_add_button) >= 0
     panel.close()
 
 
@@ -618,6 +620,46 @@ def test_info_panel_face_avatar_context_menu_uses_fallback_name_when_unnamed(
     avatar = panel._face_layout.itemAt(0).widget()
     assert avatar is not None
     assert avatar._menu_action_labels()[1] == "Not This Person"
+    panel.close()
+
+
+def test_info_panel_face_candidates_update_existing_avatars_without_rebuild(
+    qapp: QApplication,
+) -> None:
+    from iPhoto.people.repository import AssetFaceAnnotation, PersonSummary
+
+    panel = InfoPanel()
+    panel.set_asset_faces(
+        [
+            AssetFaceAnnotation(
+                face_id="face-1",
+                person_id="person-1",
+                display_name="Alice",
+                box_x=0,
+                box_y=0,
+                box_w=10,
+                box_h=10,
+                image_width=100,
+                image_height=100,
+            )
+        ]
+    )
+    avatar = panel._face_layout.itemAt(0).widget()
+    candidates = [
+        PersonSummary(
+            person_id="person-2",
+            name="Bob",
+            key_face_id="face-2",
+            face_count=2,
+            thumbnail_path=None,
+            created_at="2024-01-02T00:00:00+00:00",
+        )
+    ]
+
+    panel.set_face_action_candidates(candidates)
+
+    assert panel._face_layout.itemAt(0).widget() is avatar
+    assert avatar._candidates == candidates
     panel.close()
 
 
@@ -1242,6 +1284,144 @@ def test_info_panel_repeated_same_gps_metadata_does_not_reset_location_map(
 
     set_location.assert_not_called()
     assert not panel._location_map.isHidden()
+    panel.close()
+
+
+def test_info_panel_missing_location_hides_map_without_repaint(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(info_location_map_module, "check_opengl_support", lambda: True)
+    monkeypatch.setattr(
+        info_location_map_module,
+        "choose_map_widget_backend",
+        _fake_choose_post_render_map_widget_backend,
+    )
+
+    panel = InfoPanel()
+    panel.set_location_capability(enabled=True)
+    panel.set_asset_metadata(
+        {
+            "rel": "map.jpg",
+            "name": "map.jpg",
+            "gps": {"lat": 48.137154, "lon": 11.576124},
+            "location": "Munich",
+        }
+    )
+    panel.show()
+    qapp.processEvents()
+
+    map_view = panel._location_map
+    map_widget = map_view._map_widget
+    assert isinstance(map_widget, _PostRenderMiniMapWidget)
+    assert not map_view.isHidden()
+    full_update_count = map_widget.full_update_count
+
+    panel.set_asset_metadata({"rel": "plain.jpg", "name": "plain.jpg"})
+    qapp.processEvents()
+
+    assert map_view.isHidden()
+    assert map_view.current_location() == (None, None)
+    assert map_view._screen_point is None
+    assert not map_view._pin_sync_timer.isActive()
+    assert not map_view._pin_settle_timer.isActive()
+    assert map_widget.full_update_count == full_update_count
+    panel.close()
+
+
+def test_info_panel_content_update_batches_visible_geometry_refresh(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from iPhoto.people.repository import AssetFaceAnnotation, PersonSummary
+
+    panel = InfoPanel()
+    panel.set_location_capability(enabled=True)
+    panel.show()
+    qapp.processEvents()
+
+    refresh = Mock(wraps=panel._refresh_panel_geometry)
+    monkeypatch.setattr(panel, "_refresh_panel_geometry", refresh)
+
+    with panel.content_update():
+        panel.set_asset_metadata(
+            {
+                "rel": "plain.jpg",
+                "name": "plain.jpg",
+                "dt": "2024-01-01T00:00:00Z",
+                "make": "Apple",
+                "model": "iPhone",
+                "w": 4032,
+                "h": 3024,
+                "bytes": 1000,
+            }
+        )
+        panel.set_face_action_candidates(
+            [
+                PersonSummary(
+                    person_id="person-1",
+                    name="Alice",
+                    key_face_id="face-1",
+                    face_count=1,
+                    thumbnail_path=None,
+                    created_at="2024-01-01T00:00:00+00:00",
+                )
+            ]
+        )
+        panel.set_asset_faces(
+            [
+                AssetFaceAnnotation(
+                    face_id="face-1",
+                    person_id="person-1",
+                    display_name="Alice",
+                    box_x=0,
+                    box_y=0,
+                    box_w=10,
+                    box_h=10,
+                    image_width=100,
+                    image_height=100,
+                )
+            ]
+        )
+
+    assert refresh.call_count == 1
+    first_height = panel.height()
+    qapp.processEvents()
+    assert panel.height() == first_height
+    assert refresh.call_count == 1
+    panel.close()
+
+
+def test_info_panel_location_preview_reflow_stabilizes_on_first_event_pass(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(info_location_map_module, "check_opengl_support", lambda: False)
+    monkeypatch.setattr(
+        info_location_map_module,
+        "choose_map_widget_backend",
+        _fake_choose_map_widget_backend,
+    )
+
+    panel = InfoPanel()
+    panel.set_location_capability(enabled=True)
+    panel.set_asset_metadata({"rel": "map.jpg", "name": "map.jpg"})
+    panel.show()
+    qapp.processEvents()
+
+    panel.preview_location("Munich", 48.137154, 11.576124)
+    qapp.processEvents()
+
+    first_height = panel.height()
+    layout = panel.layout()
+    expected_height = layout.totalHeightForWidth(max(panel.width(), panel.minimumWidth()))
+    assert first_height >= expected_height
+    assert panel._location_map.width() == panel._location_map.height()
+
+    for _ in range(3):
+        qapp.processEvents()
+
+    assert panel.height() == first_height
     panel.close()
 
 

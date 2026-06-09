@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPalette, QPixmap, QShowEvent
@@ -56,6 +57,8 @@ _LENS_SPEC_RE = re.compile(
 
 _PLUS_CIRCLE_ICON_PATH = Path(__file__).resolve().parents[1] / "icon" / "plus.circle.svg"
 _FACE_AVATAR_DIAMETER = 48
+_AVATAR_PIXMAP_CACHE_MAX = 128
+_AVATAR_PIXMAP_CACHE: dict[tuple[str, int, int, int], QPixmap] = {}
 
 
 def _parse_svg_dimension(value: str) -> float:
@@ -402,12 +405,17 @@ class InfoPanel(QWidget):
         self._metadata: Optional[dict[str, Any]] = None
         self._current_rel: Optional[str] = None
         self._asset_faces: list[AssetFaceAnnotation] = []
+        self._asset_face_signature: tuple[tuple[object, ...], ...] | None = None
         self._face_action_candidates: list[PersonSummary] = []
         self._drag_active = False
         self._drag_offset = None
         self._centered = False
         self._post_show_reflow_queued = False
         self._post_show_reflow_recenter = False
+        self._content_update_depth = 0
+        self._content_update_previous_updates_enabled: bool | None = None
+        self._pending_geometry_refresh = False
+        self._pending_geometry_recenter = False
         self._location_capability_enabled = False
         self._location_preview_enabled = False
         self._location_fallback_text = self._DEFAULT_LOCATION_FALLBACK_TEXT
@@ -610,16 +618,13 @@ class InfoPanel(QWidget):
         self._current_rel = str(metadata.get("rel") or metadata.get("name") or "") or None
 
         formatted = self._format_metadata(metadata)
-        self._filename_label.setText(formatted.name)
-        self._timestamp_label.setText(formatted.timestamp)
-        self._camera_label.setVisible(bool(formatted.camera))
-        self._camera_label.setText(formatted.camera)
-        self._lens_label.setVisible(bool(formatted.lens))
-        self._lens_label.setText(formatted.lens)
-        self._summary_label.setVisible(bool(formatted.summary))
-        self._summary_label.setText(formatted.summary)
+        self._set_label_text(self._filename_label, formatted.name)
+        self._set_label_text(self._timestamp_label, formatted.timestamp)
+        self._set_label_state(self._camera_label, formatted.camera, visible=bool(formatted.camera))
+        self._set_label_state(self._lens_label, formatted.lens, visible=bool(formatted.lens))
+        self._set_label_state(self._summary_label, formatted.summary, visible=bool(formatted.summary))
         if formatted.exposure_line:
-            self._exposure_label.setText(formatted.exposure_line)
+            self._set_label_text(self._exposure_label, formatted.exposure_line)
         else:
             is_loading = bool(metadata.get("_metadata_loading"))
             fallback = (
@@ -631,18 +636,24 @@ class InfoPanel(QWidget):
                 if formatted.is_video
                 else self._tr("Detailed exposure information is unavailable.")
             )
-            self._exposure_label.setText(fallback)
+            self._set_label_text(self._exposure_label, fallback)
         self._apply_location_metadata(metadata, previous_rel=previous_rel)
         self._refresh_or_schedule_panel_geometry()
 
     def set_asset_faces(self, annotations: list[AssetFaceAnnotation]) -> None:
+        next_signature = tuple(self._face_signature(annotation) for annotation in annotations)
+        if next_signature == self._asset_face_signature:
+            self._asset_faces = list(annotations)
+            return
         self._asset_faces = list(annotations)
+        self._asset_face_signature = next_signature
         self._rebuild_face_strip()
         self._refresh_or_schedule_panel_geometry()
 
     def set_face_action_candidates(self, candidates: list[PersonSummary]) -> None:
         self._face_action_candidates = list(candidates)
-        self._rebuild_face_strip()
+        for avatar in self._face_avatar_widgets():
+            avatar.set_candidates(self._face_action_candidates)
 
     def clear(self) -> None:
         """Reset the panel to an empty state without hiding the window."""
@@ -661,8 +672,8 @@ class InfoPanel(QWidget):
             label.clear()
         self._exposure_label.setText(self._tr("No metadata available for this item."))
         self._clear_location_results()
-        self._location_map.clear_location()
         self._set_widget_explicitly_visible(self._location_map, False)
+        self._location_map.clear_location(request_repaint=False)
         self._set_widget_explicitly_visible(self._location_fallback_label, False)
         self._set_widget_explicitly_visible(self._location_download_button, False)
         self._location_editor_row.setVisible(self._location_capability_enabled)
@@ -688,6 +699,37 @@ class InfoPanel(QWidget):
         """Expose the close button for external signal wiring."""
 
         return self._close_button
+
+    @contextmanager
+    def content_update(self) -> Iterator[None]:
+        """Batch content changes so visible panel geometry is committed once."""
+
+        outermost = self._content_update_depth == 0
+        if outermost:
+            self._pending_geometry_refresh = False
+            self._pending_geometry_recenter = False
+            self._content_update_previous_updates_enabled = self.updatesEnabled()
+            if self.isVisible() and self._content_update_previous_updates_enabled:
+                self.setUpdatesEnabled(False)
+        self._content_update_depth += 1
+        try:
+            yield
+        finally:
+            self._content_update_depth -= 1
+            if self._content_update_depth > 0:
+                return
+            pending_refresh = self._pending_geometry_refresh
+            pending_recenter = self._pending_geometry_recenter
+            previous_updates_enabled = self._content_update_previous_updates_enabled
+            self._pending_geometry_refresh = False
+            self._pending_geometry_recenter = False
+            self._content_update_previous_updates_enabled = None
+            if pending_refresh:
+                self._refresh_panel_geometry(recenter=pending_recenter)
+            if previous_updates_enabled is not None and self.updatesEnabled() != previous_updates_enabled:
+                self.setUpdatesEnabled(previous_updates_enabled)
+            if pending_refresh and self.isVisible():
+                self.update()
 
     def set_location_capability(
         self,
@@ -846,6 +888,41 @@ class InfoPanel(QWidget):
         )
         return label
 
+    @staticmethod
+    def _set_label_text(label: QLabel, text: str) -> None:
+        if label.text() != text:
+            label.setText(text)
+
+    def _set_label_state(self, label: QLabel, text: str, *, visible: bool) -> None:
+        self._set_label_text(label, text)
+        if label.isHidden() == visible:
+            label.setVisible(visible)
+
+    @staticmethod
+    def _face_signature(annotation: AssetFaceAnnotation) -> tuple[object, ...]:
+        thumbnail_path = annotation.thumbnail_path
+        return (
+            annotation.face_id,
+            annotation.person_id,
+            annotation.display_name,
+            annotation.box_x,
+            annotation.box_y,
+            annotation.box_w,
+            annotation.box_h,
+            annotation.image_width,
+            annotation.image_height,
+            str(thumbnail_path) if thumbnail_path is not None else None,
+            annotation.is_manual,
+        )
+
+    def _face_avatar_widgets(self) -> list[_FaceAvatarWidget]:
+        avatars: list[_FaceAvatarWidget] = []
+        for index in range(self._face_layout.count()):
+            widget = self._face_layout.itemAt(index).widget()
+            if isinstance(widget, _FaceAvatarWidget):
+                avatars.append(widget)
+        return avatars
+
     def _apply_location_metadata(
         self,
         metadata: Mapping[str, Any],
@@ -1001,6 +1078,8 @@ class InfoPanel(QWidget):
 
     def _show_location_map(self, latitude: float, longitude: float) -> None:
         target = (float(latitude), float(longitude))
+        self._location_map.prepare_for_panel_width(self._available_location_map_width())
+        self._set_widget_explicitly_visible(self._location_map, True)
         current_lat, current_lon = self._location_map.current_location()
         should_update_location = (
             self._location_map.map_widget() is None
@@ -1015,13 +1094,28 @@ class InfoPanel(QWidget):
         if should_update_location:
             self._location_map.set_location(target[0], target[1])
             self._last_location_map_target = target
-        self._set_widget_explicitly_visible(self._location_map, True)
+        self._location_container.updateGeometry()
+        location_layout = self._location_container.layout()
+        if location_layout is not None:
+            location_layout.invalidate()
+            location_layout.activate()
 
     def _hide_location_map(self, *, clear: bool) -> None:
-        if clear:
-            self._location_map.clear_location()
-            self._last_location_map_target = None
         self._set_widget_explicitly_visible(self._location_map, False)
+        if clear:
+            self._location_map.clear_location(request_repaint=False)
+            self._last_location_map_target = None
+
+    def _available_location_map_width(self) -> int:
+        width = self._location_container.width()
+        if width <= 0:
+            width = max(self.width(), self.minimumWidth())
+            layout = self.layout()
+            if layout is not None:
+                margins = layout.contentsMargins()
+                width -= margins.left() + margins.right()
+            width -= 32
+        return max(self.minimumWidth() - 48, width)
 
     def _handle_location_editor_key_press(self, event: QKeyEvent) -> bool:
         key = event.key()
@@ -1064,21 +1158,28 @@ class InfoPanel(QWidget):
         return False
 
     def _rebuild_face_strip(self) -> None:
-        while self._face_layout.count() > 0:
-            item = self._face_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                if widget is self._face_add_button:
-                    widget.hide()
-                else:
-                    widget.deleteLater()
-        for annotation in self._asset_faces:
-            self._face_layout.addWidget(self._make_face_avatar(annotation))
-        self._face_add_button.show()
-        self._face_layout.addWidget(self._face_add_button)
-        self._face_layout.addStretch(1)
-        self._face_separator.setVisible(True)
-        self._face_container.setVisible(True)
+        updates_enabled = self._face_container.updatesEnabled()
+        if updates_enabled:
+            self._face_container.setUpdatesEnabled(False)
+        try:
+            while self._face_layout.count() > 0:
+                item = self._face_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    if widget is self._face_add_button:
+                        widget.hide()
+                    else:
+                        widget.deleteLater()
+            for annotation in self._asset_faces:
+                self._face_layout.addWidget(self._make_face_avatar(annotation))
+            self._face_add_button.show()
+            self._face_layout.addWidget(self._face_add_button)
+            self._face_layout.addStretch(1)
+            self._face_separator.setVisible(True)
+            self._face_container.setVisible(True)
+        finally:
+            if updates_enabled:
+                self._face_container.setUpdatesEnabled(True)
 
     def _make_face_avatar(self, annotation: AssetFaceAnnotation) -> QLabel:
         label = _FaceAvatarWidget(annotation, self._face_action_candidates, self._face_container)
@@ -1118,6 +1219,10 @@ class InfoPanel(QWidget):
     def _refresh_or_schedule_panel_geometry(self, *, recenter: bool = False) -> None:
         """Refresh hidden layouts immediately, but coalesce visible reflows."""
 
+        if self._content_update_depth > 0:
+            self._pending_geometry_refresh = True
+            self._pending_geometry_recenter = self._pending_geometry_recenter or recenter
+            return
         if self.isVisible():
             self._schedule_post_show_reflow(recenter=recenter)
             return
@@ -1150,6 +1255,10 @@ class InfoPanel(QWidget):
         self._post_show_reflow_queued = False
         recenter = self._post_show_reflow_recenter
         self._post_show_reflow_recenter = False
+        if self._content_update_depth > 0:
+            self._pending_geometry_refresh = True
+            self._pending_geometry_recenter = self._pending_geometry_recenter or recenter
+            return
         self._refresh_panel_geometry(recenter=recenter)
         self.update()
 
@@ -1646,6 +1755,19 @@ class InfoPanel(QWidget):
 def _avatar_pixmap(path: Path | None) -> QPixmap | None:
     if path is None or not path.exists():
         return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    cache_key = (
+        str(path.resolve()),
+        int(stat.st_mtime_ns),
+        int(stat.st_size),
+        _FACE_AVATAR_DIAMETER,
+    )
+    cached = _AVATAR_PIXMAP_CACHE.get(cache_key)
+    if cached is not None and not cached.isNull():
+        return QPixmap(cached)
     source = QPixmap(str(path))
     if source.isNull():
         return None
@@ -1665,4 +1787,7 @@ def _avatar_pixmap(path: Path | None) -> QPixmap | None:
     painter.setClipPath(clip)
     painter.drawPixmap(0, 0, scaled)
     painter.end()
+    if len(_AVATAR_PIXMAP_CACHE) >= _AVATAR_PIXMAP_CACHE_MAX:
+        _AVATAR_PIXMAP_CACHE.pop(next(iter(_AVATAR_PIXMAP_CACHE)), None)
+    _AVATAR_PIXMAP_CACHE[cache_key] = QPixmap(rounded)
     return rounded

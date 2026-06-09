@@ -351,6 +351,14 @@ class InfoLocationMapView(QWidget):
     def current_location(self) -> tuple[float | None, float | None]:
         return self._latitude, self._longitude
 
+    def prepare_for_panel_width(self, width: int) -> None:
+        """Pre-size the square map before a hidden preview enters layout."""
+
+        target_width = max(self._MINIMUM_SIDE, int(width))
+        if target_width <= 0:
+            return
+        self._sync_square_height(target_width)
+
     def set_location(self, latitude: float, longitude: float, *, zoom: float | None = None) -> None:
         next_latitude = float(latitude)
         next_longitude = float(longitude)
@@ -398,7 +406,7 @@ class InfoLocationMapView(QWidget):
             self._overlay.set_screen_point(None)
             self._overlay.hide()
 
-    def clear_location(self) -> None:
+    def clear_location(self, *, request_repaint: bool = True) -> None:
         already_clear = (
             self._latitude is None
             and self._longitude is None
@@ -419,7 +427,8 @@ class InfoLocationMapView(QWidget):
         self._viewport_settle_timer.stop()
         self._overlay.set_screen_point(None)
         self._overlay.hide()
-        self._request_pin_repaint()
+        if request_repaint:
+            self._request_pin_repaint()
 
     def shutdown(self) -> None:
         self._pin_sync_timer.stop()
@@ -630,8 +639,9 @@ class InfoLocationMapView(QWidget):
             return None
         return self._map_widget.geometry()
 
-    def _sync_square_height(self) -> None:
-        target_height = max(self._MINIMUM_SIDE, self.width())
+    def _sync_square_height(self, target_width: int | None = None) -> None:
+        width = self.width() if target_width is None else int(target_width)
+        target_height = max(self._MINIMUM_SIDE, width)
         if self.minimumHeight() == target_height and self.maximumHeight() == target_height:
             return
         self.setFixedHeight(target_height)
@@ -904,6 +914,10 @@ class InfoLocationMapView(QWidget):
 
     def _request_pin_repaint(self) -> None:
         if self._map_widget is None:
+            return
+        if self.isHidden():
+            return
+        if isinstance(self._map_widget, QWidget) and self._map_widget.isHidden():
             return
         request_full_update = getattr(self._map_widget, "request_full_update", None)
         if callable(request_full_update):
