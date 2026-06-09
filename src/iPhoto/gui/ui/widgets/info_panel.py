@@ -9,7 +9,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from PySide6.QtCore import QDateTime, QEvent, QLocale, QObject, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QKeyEvent, QMouseEvent, QPainter, QPainterPath, QPalette, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from iPhoto.gui.i18n import formatters, tr
 from iPhoto.people.repository import AssetFaceAnnotation, PersonSummary
 from ....application.ports import MapRuntimePort
 
@@ -205,13 +206,14 @@ class _FaceAvatarWidget(QLabel):
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
-        if chosen.text() == "Delete":
+        action_id = chosen.data()
+        if action_id == "delete_face":
             self.deleteRequested.emit(self._annotation)
             return
-        if chosen.text() == "Choose Someone Else…":
+        if action_id == "choose_someone_else":
             self._prompt_choose_person()
             return
-        if chosen.text() == "New Person…":
+        if action_id == "new_person":
             self._prompt_new_person()
 
     def _build_context_menu(self) -> QMenu | None:
@@ -237,10 +239,10 @@ class _FaceAvatarWidget(QLabel):
                     label=not_this_label,
                     children=tuple(
                         MenuActionSpec(
-                            action_id=f"not_this_person:{submenu_label}",
+                            action_id=action_id,
                             label=submenu_label,
                         )
-                        for submenu_label in submenu_labels
+                        for action_id, submenu_label in submenu_labels
                     ),
                 ),
             ],
@@ -251,12 +253,21 @@ class _FaceAvatarWidget(QLabel):
             menu._face_action_submenu = submenu  # type: ignore[attr-defined]
         return menu
 
-    def _menu_action_labels(self) -> tuple[str, str, tuple[str, str]]:
-        return ("Delete", self._not_this_label(), ("Choose Someone Else…", "New Person…"))
+    def _menu_action_labels(self) -> tuple[str, str, tuple[tuple[str, str], tuple[str, str]]]:
+        return (
+            tr("InfoPanel", "Delete"),
+            self._not_this_label(),
+            (
+                ("choose_someone_else", tr("InfoPanel", "Choose Someone Else…")),
+                ("new_person", tr("InfoPanel", "New Person…")),
+            ),
+        )
 
     def _not_this_label(self) -> str:
         display_name = str(self._annotation.display_name or "").strip()
-        return f"Not {display_name}" if display_name else "Not This Person"
+        if display_name:
+            return tr("InfoPanel", "Not {name}").format(name=display_name)
+        return tr("InfoPanel", "Not This Person")
 
     def _prompt_choose_person(self) -> None:
         options = [
@@ -269,9 +280,9 @@ class _FaceAvatarWidget(QLabel):
         host = self.window() if isinstance(self.window(), QWidget) else self
         dialog = GroupPeopleDialog(
             options,
-            title_text="Choose Someone Else",
-            prompt_text="Assign this face to",
-            confirm_text="Choose",
+            title_text=tr("InfoPanel", "Choose Someone Else"),
+            prompt_text=tr("InfoPanel", "Assign this face to"),
+            confirm_text=tr("InfoPanel", "Choose"),
             min_selection=1,
             max_selection=1,
             dark_mode=_uses_dark_theme(host),
@@ -287,8 +298,8 @@ class _FaceAvatarWidget(QLabel):
     def _prompt_new_person(self) -> None:
         host = self.window() if isinstance(self.window(), QWidget) else self
         dialog = QInputDialog(host)
-        dialog.setWindowTitle("New Person")
-        dialog.setLabelText("Person name:")
+        dialog.setWindowTitle(tr("InfoPanel", "New Person"))
+        dialog.setLabelText(tr("InfoPanel", "Person name:"))
         dialog.setTextValue("")
         _style_popup_input_dialog(dialog, host)
         if dialog.exec() != QInputDialog.DialogCode.Accepted:
@@ -327,8 +338,11 @@ class _FaceAvatarWidget(QLabel):
 
 
 def _person_choice_label(summary: PersonSummary) -> str:
-    display_name = str(summary.name or "").strip() or "Unnamed"
-    return f"{display_name} ({summary.face_count})"
+    display_name = str(summary.name or "").strip() or tr("InfoPanel", "Unnamed")
+    return tr("InfoPanel", "{name} ({count})").format(
+        name=display_name,
+        count=formatters.format_integer(summary.face_count),
+    )
 
 @dataclass
 class _FormattedMetadata:
@@ -355,6 +369,7 @@ class InfoPanel(QWidget):
     _SHADOW_SIZE = 16
     _SHADOW_MAX_ALPHA = 18
     _SHADOW_RADIUS_GROWTH = 0.5
+    _DEFAULT_LOCATION_FALLBACK_TEXT = "Install the map extension to use Assign a Location."
     dismissed = Signal()
     manualFaceAddRequested = Signal()
     faceDeleteRequested = Signal(object)
@@ -395,12 +410,13 @@ class InfoPanel(QWidget):
         self._post_show_reflow_recenter = False
         self._location_capability_enabled = False
         self._location_preview_enabled = False
-        self._location_fallback_text = "Install the map extension to use Assign a Location."
+        self._location_fallback_text = self._DEFAULT_LOCATION_FALLBACK_TEXT
         self._location_suggestions: list[object] = []
         self._selected_location_suggestion: object | None = None
         self._updating_location_ui = False
         self._location_dirty = False
         self._location_confirm_queued = False
+        self._location_busy = False
         self._last_location_map_target: tuple[float, float] | None = None
 
         # -- title bar -----------------------------------------------------
@@ -410,7 +426,7 @@ class InfoPanel(QWidget):
         title_layout.setContentsMargins(16, 10, 12, 6)
         title_layout.setSpacing(8)
 
-        self._title_label = QLabel("Info", self._title_bar)
+        self._title_label = QLabel(self._tr("Info"), self._title_bar)
         self._title_label.setObjectName("infoPanelTitleLabel")
         self._title_label.setAlignment(
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -430,7 +446,7 @@ class InfoPanel(QWidget):
         self._close_button.setAutoRaise(True)
         self._close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self._close_button.setToolTip("Close")
+        self._close_button.setToolTip(self._tr("Close"))
         self._apply_close_button_style()
         self._close_button.clicked.connect(self.close)
         title_layout.addWidget(
@@ -517,7 +533,10 @@ class InfoPanel(QWidget):
         self._location_fallback_label.hide()
         self._location_layout.addWidget(self._location_fallback_label)
 
-        self._location_download_button = QPushButton("Download Map Extension", self._location_container)
+        self._location_download_button = QPushButton(
+            self._tr("Download Map Extension"),
+            self._location_container,
+        )
         self._location_download_button.setAutoDefault(False)
         self._location_download_button.setDefault(False)
         self._location_download_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -533,12 +552,12 @@ class InfoPanel(QWidget):
         self._location_editor = QLineEdit(self._location_editor_row)
         self._location_editor.setClearButtonEnabled(True)
         self._location_editor.setCursor(Qt.CursorShape.IBeamCursor)
-        self._location_editor.setPlaceholderText("Assign a Location")
+        self._location_editor.setPlaceholderText(self._location_placeholder_text())
         self._location_editor.installEventFilter(self)
         self._location_editor.textEdited.connect(self._handle_location_text_edited)
         self._location_editor_layout.addWidget(self._location_editor, 1)
 
-        self._location_confirm_button = QPushButton("Confirm", self._location_editor_row)
+        self._location_confirm_button = QPushButton(self._confirm_button_text(), self._location_editor_row)
         self._location_confirm_button.setAutoDefault(False)
         self._location_confirm_button.setDefault(False)
         self._location_confirm_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -567,6 +586,22 @@ class InfoPanel(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def retranslate_ui(self) -> None:
+        """Refresh translated labels after the application language changes."""
+
+        self._title_label.setText(self._tr("Info"))
+        self._close_button.setToolTip(self._tr("Close"))
+        self._location_download_button.setText(self._tr("Download Map Extension"))
+        if self._metadata is not None:
+            self.set_asset_metadata(self._metadata)
+        else:
+            self._exposure_label.setText(self._tr("No metadata available for this item."))
+            self._location_editor.setPlaceholderText(self._location_placeholder_text())
+        if not self._location_fallback_label.isHidden():
+            self._location_fallback_label.setText(self._location_fallback_display_text())
+        self.set_location_busy(self._location_busy)
+        self._refresh_or_schedule_panel_geometry()
+
     def set_asset_metadata(self, metadata: Mapping[str, Any]) -> None:
         """Populate the panel with information extracted from *metadata*."""
 
@@ -588,13 +623,13 @@ class InfoPanel(QWidget):
         else:
             is_loading = bool(metadata.get("_metadata_loading"))
             fallback = (
-                "Loading detailed video information..."
+                self._tr("Loading detailed video information...")
                 if formatted.is_video and is_loading
-                else "Loading detailed exposure information..."
+                else self._tr("Loading detailed exposure information...")
                 if is_loading
-                else "Detailed video information is unavailable."
+                else self._tr("Detailed video information is unavailable.")
                 if formatted.is_video
-                else "Detailed exposure information is unavailable."
+                else self._tr("Detailed exposure information is unavailable.")
             )
             self._exposure_label.setText(fallback)
         self._apply_location_metadata(metadata, previous_rel=previous_rel)
@@ -624,7 +659,7 @@ class InfoPanel(QWidget):
             self._exposure_label,
         ):
             label.clear()
-        self._exposure_label.setText("No metadata available for this item.")
+        self._exposure_label.setText(self._tr("No metadata available for this item."))
         self._clear_location_results()
         self._location_map.clear_location()
         self._set_widget_explicitly_visible(self._location_map, False)
@@ -632,11 +667,11 @@ class InfoPanel(QWidget):
         self._set_widget_explicitly_visible(self._location_download_button, False)
         self._location_editor_row.setVisible(self._location_capability_enabled)
         self._location_editor.clear()
-        self._location_editor.setPlaceholderText("Assign a Location")
+        self._location_editor.setPlaceholderText(self._location_placeholder_text())
         self._location_editor.setReadOnly(False)
         self._location_editor.setClearButtonEnabled(True)
         self._location_confirm_button.setEnabled(False)
-        self._location_confirm_button.setText("Confirm")
+        self._location_confirm_button.setText(self._confirm_button_text())
         self._location_dirty = False
         self._location_confirm_queued = False
         self._last_location_map_target = None
@@ -712,13 +747,16 @@ class InfoPanel(QWidget):
         self._refresh_or_schedule_panel_geometry()
 
     def set_location_busy(self, busy: bool) -> None:
+        self._location_busy = bool(busy)
         self._location_editor.setEnabled(self._location_capability_enabled)
         self._location_editor.setReadOnly(bool(busy) and self._location_capability_enabled)
         self._location_editor.setClearButtonEnabled(self._location_capability_enabled and not busy)
         self._location_confirm_button.setEnabled(
             not busy and self._location_capability_enabled and self._selected_location_suggestion is not None
         )
-        self._location_confirm_button.setText("Assigning..." if busy else "Confirm")
+        self._location_confirm_button.setText(
+            self._assigning_button_text() if busy else self._confirm_button_text()
+        )
 
     def preview_location(self, display_name: str, latitude: float, longitude: float) -> None:
         metadata = dict(self._metadata or {})
@@ -746,6 +784,24 @@ class InfoPanel(QWidget):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _tr(source_text: str) -> str:
+        return QCoreApplication.translate("InfoPanel", source_text, None)
+
+    def _location_placeholder_text(self) -> str:
+        return self._tr("Assign a Location")
+
+    def _confirm_button_text(self) -> str:
+        return self._tr("Confirm")
+
+    def _assigning_button_text(self) -> str:
+        return self._tr("Assigning...")
+
+    def _location_fallback_display_text(self) -> str:
+        if self._location_fallback_text == self._DEFAULT_LOCATION_FALLBACK_TEXT:
+            return self._tr("Install the map extension to use Assign a Location.")
+        return self._location_fallback_text
+
     def _apply_close_button_style(self) -> None:
         """Recompute hover/pressed colours from the current palette."""
         text = self.palette().color(QPalette.ColorRole.WindowText)
@@ -820,7 +876,7 @@ class InfoPanel(QWidget):
                     self._hide_location_map(clear=True)
             else:
                 self._hide_location_map(clear=False)
-                self._location_fallback_label.setText(self._location_fallback_text)
+                self._location_fallback_label.setText(self._location_fallback_display_text())
                 self._set_widget_explicitly_visible(self._location_fallback_label, True)
                 self._set_widget_explicitly_visible(self._location_download_button, True)
             return
@@ -846,7 +902,7 @@ class InfoPanel(QWidget):
                 self._updating_location_ui = False
             self._location_dirty = False
         self._location_editor.setPlaceholderText(
-            "Assign a Location" if not normalized_location else ""
+            self._location_placeholder_text() if not normalized_location else ""
         )
 
         if has_valid_gps:
@@ -1346,11 +1402,7 @@ class InfoPanel(QWidget):
         except ValueError:
             return ""
         localized = parsed.astimezone()
-        qt_datetime = QDateTime(localized)
-        formatted = QLocale.system().toString(qt_datetime, QLocale.FormatType.LongFormat)
-        if formatted:
-            return formatted
-        return localized.strftime("%Y-%m-%d %H:%M:%S")
+        return formatters.format_datetime(localized)
 
     def _format_camera(self, info: Mapping[str, Any]) -> str:
         """Combine camera make and model if they are available."""
@@ -1423,7 +1475,9 @@ class InfoPanel(QWidget):
         iso_value = info.get("iso")
         iso_text = ""
         if isinstance(iso_value, (int, float)):
-            iso_text = f"ISO {int(round(float(iso_value)))}"
+            iso_text = tr("InfoPanel", "ISO {value}").format(
+                value=formatters.format_integer(int(round(float(iso_value))))
+            )
 
         focal_text = self._format_focal_length(info.get("focal_length"))
         ev_text = self._format_exposure_comp(info.get("exposure_compensation"))
@@ -1473,7 +1527,7 @@ class InfoPanel(QWidget):
         if numeric is None:
             return ""
         text = self._format_decimal(numeric, precision=2)
-        return f"{text} ev"
+        return tr("InfoPanel", "{value} EV").format(value=text)
 
     def _format_shutter(self, value: Any) -> str:
         """Return shutter speed formatted as a fraction when suitable."""
@@ -1494,22 +1548,7 @@ class InfoPanel(QWidget):
     def _format_filesize(self, value: Any) -> str:
         """Return *value* expressed in human readable units."""
 
-        numeric = self._coerce_float(value)
-        if numeric is None or numeric <= 0:
-            return ""
-        units = ["B", "KB", "MB", "GB", "TB"]
-        size = float(numeric)
-        unit_index = 0
-        while size >= 1024 and unit_index < len(units) - 1:
-            size /= 1024
-            unit_index += 1
-        if unit_index == 0:
-            return f"{int(size)} {units[unit_index]}"
-
-        rounded = round(size, 1)
-        if float(rounded).is_integer():
-            return f"{int(rounded)} {units[unit_index]}"
-        return f"{rounded:.1f} {units[unit_index]}"
+        return formatters.format_file_size(value)
 
     def _format_codec(self, info: Mapping[str, Any]) -> str:
         """Return a readable codec label derived from the stored metadata."""
@@ -1550,7 +1589,9 @@ class InfoPanel(QWidget):
         numeric = self._coerce_float(value)
         if numeric is None or numeric <= 0:
             return ""
-        return f"{self._format_decimal(numeric, precision=2)} fps"
+        return tr("InfoPanel", "{value} fps").format(
+            value=self._format_decimal(numeric, precision=2)
+        )
 
     def _format_duration(self, value: Any) -> str:
         """Return a short ``mm:ss`` or ``hh:mm:ss`` string for *value* seconds."""
@@ -1587,9 +1628,7 @@ class InfoPanel(QWidget):
     def _format_decimal(self, value: float, *, precision: int) -> str:
         """Return *value* formatted with ``precision`` decimal places."""
 
-        text = f"{value:.{precision}f}"
-        text = text.rstrip("0").rstrip(".")
-        return text or "0"
+        return formatters.format_decimal(value, precision=precision)
 
     def _coerce_float(self, value: Any) -> Optional[float]:
         """Return *value* as ``float`` when it represents a numeric quantity."""

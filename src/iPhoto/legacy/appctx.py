@@ -15,6 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..di.container import DependencyContainer
     from ..events.bus import EventBus
     from ..gui.facade import AppFacade
+    from ..gui.i18n import TranslationManager
     from ..gui.ui.theme_manager import ThemeManager
     from ..bootstrap.library_session import LibrarySession
     from ..library.manager import LibraryManager
@@ -27,9 +28,7 @@ class AppContext:
     def __init__(self, defer_startup_tasks: bool = False) -> None:
         from ..bootstrap.runtime_context import RuntimeContext
 
-        self._runtime: RuntimeContext = RuntimeContext.create(
-            defer_startup=defer_startup_tasks
-        )
+        self._runtime: RuntimeContext = RuntimeContext.create(defer_startup=defer_startup_tasks)
         self.defer_startup_tasks = defer_startup_tasks
 
     @property
@@ -55,6 +54,10 @@ class AppContext:
     @property
     def theme(self) -> "ThemeManager":
         return self._runtime.theme
+
+    @property
+    def translation(self) -> "TranslationManager":
+        return self._runtime.translation
 
     @property
     def asset_runtime(self):

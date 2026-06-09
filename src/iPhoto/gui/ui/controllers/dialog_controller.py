@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QWidget
 
 from ....application.contracts.runtime_entry_contract import RuntimeEntryContract
@@ -36,12 +37,15 @@ class DialogController:
     # Public API
     # ------------------------------------------------------------------
     def open_album_dialog(self) -> Path | None:
-        return dialogs.select_directory(self._parent, "Select album")
+        return dialogs.select_directory(
+            self._parent,
+            QCoreApplication.translate("DialogController", "Select album", None),
+        )
 
     def bind_library_dialog(self) -> Path | None:
         root = dialogs.select_directory(
             self._parent,
-            "Select Basic Library",
+            QCoreApplication.translate("DialogController", "Select Basic Library", None),
             use_qt_directory_dialog_on_macos=True,
         )
         if root is None:
@@ -65,7 +69,13 @@ class DialogController:
         if bound_root is not None:
             self._context.settings.set("basic_library_path", str(bound_root))
             self._start_initial_scan_if_needed(bound_root)
-            self._status.showMessage(f"Basic Library bound to {bound_root}")
+            self._status.showMessage(
+                QCoreApplication.translate(
+                    "DialogController",
+                    "Basic Library bound to {path}",
+                    None,
+                ).format(path=bound_root)
+            )
             try:
                 self._context.facade.open_album(bound_root)
                 _logger.info("bind_library_dialog: facade.open_album succeeded")
@@ -106,23 +116,33 @@ class DialogController:
     def prompt_for_basic_library(self) -> None:
         dialogs.show_information(
             self._parent,
-            "Select a folder to use as your Basic Library.",
-            title="Bind Basic Library",
+            QCoreApplication.translate(
+                "DialogController",
+                "Select a folder to use as your Basic Library.",
+                None,
+            ),
+            title=QCoreApplication.translate(
+                "DialogController",
+                "Bind Basic Library",
+                None,
+            ),
         )
         self.bind_library_dialog()
 
     def prompt_restore_to_root(self, filename: str) -> bool:
         """Ask whether *filename* should be restored to the library root."""
 
-        message = (
-            f"The original album for '{filename}' could not be found or its original "
+        message = QCoreApplication.translate(
+            "DialogController",
+            "The original album for '{filename}' could not be found or its original "
             "location could not be determined. Do you want to restore this file "
-            "to the main 'Basic Library' folder instead?"
-        )
+            "to the main 'Basic Library' folder instead?",
+            None,
+        ).format(filename=filename)
         return dialogs.confirm_action(
             self._parent,
             message,
-            title="Restore Failed",
-            yes_label="Yes",
-            no_label="No",
+            title=QCoreApplication.translate("DialogController", "Restore Failed", None),
+            yes_label=QCoreApplication.translate("DialogController", "Yes", None),
+            no_label=QCoreApplication.translate("DialogController", "No", None),
         )

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from typing import TYPE_CHECKING
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QCoreApplication, QObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QProgressBar
 
@@ -15,6 +15,7 @@ from ....config import RECENTLY_DELETED_DIR_NAME
 
 if TYPE_CHECKING:
     from ..widgets.chrome_status_bar import ChromeStatusBar
+
 
 class StatusBarController(QObject):
     """Manage progress feedback and transient messages in the status bar."""
@@ -49,6 +50,9 @@ class StatusBarController(QObject):
         else:
             self._status_bar.showMessage(message, timeout_ms)
 
+    def _tr(self, source_text: str) -> str:
+        return QCoreApplication.translate("StatusBar", source_text, None)
+
     def begin_scan(self) -> None:
         """Prepare the UI for a long-running scan operation."""
 
@@ -60,7 +64,7 @@ class StatusBarController(QObject):
         self._progress_bar.setVisible(True)
         if self._rescan_action is not None:
             self._rescan_action.setEnabled(False)
-        self.show_message("Starting scan…")
+        self.show_message(self._tr("Starting scan…"))
 
     # Facade callbacks ------------------------------------------------
     def handle_scan_progress(self, root: Path, current: int, total: int) -> None:
@@ -79,14 +83,19 @@ class StatusBarController(QObject):
 
         if total < 0:
             self._progress_bar.setRange(0, 0)
-            self.show_message("Scanning… (counting files)")
+            self.show_message(self._tr("Scanning… (counting files)"))
         elif total == 0:
             self._progress_bar.setRange(0, 0)
-            self.show_message("Scanning… (no files found)")
+            self.show_message(self._tr("Scanning… (no files found)"))
         else:
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(max(0, min(current, total)))
-            self.show_message(f"Scanning… ({current}/{total})")
+            self.show_message(
+                self._tr("Scanning… ({current}/{total})").format(
+                    current=current,
+                    total=total,
+                )
+            )
         self._progress_bar.setVisible(True)
 
     def handle_scan_finished(self, _root: Path, success: bool) -> None:
@@ -103,12 +112,15 @@ class StatusBarController(QObject):
             self._progress_context = None
         if self._rescan_action is not None:
             self._rescan_action.setEnabled(True)
-        message = "Scan complete." if success else "Scan failed."
+        message = self._tr("Scan complete.") if success else self._tr("Scan failed.")
         self.show_message(message, 5000)
 
     def handle_scan_batch_failed(self, _root: Path, count: int) -> None:
         """Report a partial failure without interrupting the active scan."""
-        self.show_message(f"Failed to save {count} items to database", 5000)
+        self.show_message(
+            self._tr("Failed to save {count} items to database").format(count=count),
+            5000,
+        )
 
     def handle_thumbnail_backfill_progress(
         self,
@@ -123,18 +135,23 @@ class StatusBarController(QObject):
         self._progress_context = "thumbnail"
         if total <= 0:
             self._progress_bar.setRange(0, 0)
-            self.show_message("Updating thumbnails…")
+            self.show_message(self._tr("Updating thumbnails…"))
         else:
             bounded_current = max(0, min(current, total))
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(bounded_current)
-            self.show_message(f"Updating thumbnails… ({bounded_current}/{total})")
+            self.show_message(
+                self._tr("Updating thumbnails… ({current}/{total})").format(
+                    current=bounded_current,
+                    total=total,
+                )
+            )
         self._progress_bar.setVisible(True)
         if total > 0 and current >= total:
             self._progress_bar.setVisible(False)
             self._progress_bar.setRange(0, 0)
             self._progress_context = None
-            self.show_message("Thumbnails updated.", 3000)
+            self.show_message(self._tr("Thumbnails updated."), 3000)
 
     def handle_load_started(self, root: Path) -> None:
         """Show an indeterminate progress indicator while assets load."""
@@ -145,7 +162,7 @@ class StatusBarController(QObject):
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
-        self.show_message("Loading items…")
+        self.show_message(self._tr("Loading items…"))
 
     def handle_load_progress(self, root: Path, current: int, total: int) -> None:
         """Update the progress bar while assets stream into the model."""
@@ -160,7 +177,12 @@ class StatusBarController(QObject):
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(max(0, min(current, total)))
         if total > 0:
-            self.show_message(f"Loading items… ({current}/{total})")
+            self.show_message(
+                self._tr("Loading items… ({current}/{total})").format(
+                    current=current,
+                    total=total,
+                )
+            )
 
     def handle_load_finished(self, root: Path, success: bool) -> None:
         """Hide the progress bar once loading wraps up."""
@@ -172,7 +194,7 @@ class StatusBarController(QObject):
         self._progress_bar.setVisible(False)
         self._progress_bar.setRange(0, 0)
         self._progress_context = None
-        message = "Album loaded." if success else "Failed to load album."
+        message = self._tr("Album loaded.") if success else self._tr("Failed to load album.")
         self.show_message(message, 5000)
 
     def handle_import_started(self, root: Path) -> None:
@@ -185,7 +207,7 @@ class StatusBarController(QObject):
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
-        self.show_message("Starting import…")
+        self.show_message(self._tr("Starting import…"))
 
     def handle_import_progress(self, root: Path, current: int, total: int) -> None:
         """Update the progress bar while the worker copies files."""
@@ -200,11 +222,16 @@ class StatusBarController(QObject):
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(max(0, min(current, total)))
         if 0 < current < total:
-            self.show_message(f"Importing… ({current}/{total})")
+            self.show_message(
+                self._tr("Importing… ({current}/{total})").format(
+                    current=current,
+                    total=total,
+                )
+            )
         elif total > 0 and current >= total:
             # The worker emits a final update once all files are copied to let
             # the user know that the subsequent rescan is in progress.
-            self.show_message("Finalising import by rescanning…")
+            self.show_message(self._tr("Finalising import by rescanning…"))
 
     def handle_import_finished(self, root: Path | None, success: bool, message: str) -> None:
         """Reset the status bar once the import worker signals completion."""
@@ -225,19 +252,18 @@ class StatusBarController(QObject):
             self._move_context_restore = source.name == RECENTLY_DELETED_DIR_NAME
         else:
             self._move_context_delete = self._paths_equal(destination, trash_root)
-            self._move_context_restore = (
-                not self._move_context_delete
-                and self._paths_equal(source, trash_root)
+            self._move_context_restore = not self._move_context_delete and self._paths_equal(
+                source, trash_root
             )
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
         if self._move_context_delete:
-            message = "Starting delete…"
+            message = self._tr("Starting delete…")
         elif self._move_context_restore:
-            message = "Starting restore…"
+            message = self._tr("Starting restore…")
         else:
-            message = "Starting move…"
+            message = self._tr("Starting move…")
         self.show_message(message)
 
     def handle_move_progress(self, _source: Path, current: int, total: int) -> None:
@@ -252,20 +278,28 @@ class StatusBarController(QObject):
             self._progress_bar.setValue(max(0, min(current, total)))
         if 0 < current < total:
             if self._move_context_delete:
-                verb = "Deleting"
+                verb = self._tr("Deleting")
             elif self._move_context_restore:
-                verb = "Restoring"
+                verb = self._tr("Restoring")
             else:
-                verb = "Moving"
-            self.show_message(f"{verb}… ({current}/{total})")
+                verb = self._tr("Moving")
+            self.show_message(
+                self._tr("{verb}… ({current}/{total})").format(
+                    verb=verb,
+                    current=current,
+                    total=total,
+                )
+            )
         elif total > 0 and current >= total:
             if self._move_context_delete:
-                tail = "delete"
+                tail = self._tr("delete")
             elif self._move_context_restore:
-                tail = "restore"
+                tail = self._tr("restore")
             else:
-                tail = "move"
-            self.show_message(f"Finalising {tail} by rescanning…")
+                tail = self._tr("move")
+            self.show_message(
+                self._tr("Finalising {operation} by rescanning…").format(operation=tail)
+            )
 
     def handle_move_finished(
         self,

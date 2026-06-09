@@ -15,6 +15,7 @@ def test_appctx_proxies_runtime_context(monkeypatch) -> None:
         facade=object(),
         event_bus=object(),
         container=object(),
+        translation=object(),
         theme=object(),
         asset_runtime=object(),
         library_session=object(),
@@ -53,6 +54,7 @@ def test_appctx_proxies_runtime_context(monkeypatch) -> None:
     assert context.facade is runtime.facade
     assert context.event_bus is runtime.event_bus
     assert context.container is runtime.container
+    assert context.translation is runtime.translation
     assert context.theme is runtime.theme
     assert context.asset_runtime is runtime.asset_runtime
     assert context.library_session is runtime.library_session

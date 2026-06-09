@@ -12,8 +12,9 @@ from PySide6.QtGui import QIcon
 
 from ....library.runtime_controller import LibraryRuntimeController
 from ....library.tree import AlbumNode
-from ...services.pinned_items_service import PinnedItemsService, PinnedSidebarItem
+from ...i18n import tr
 from ...services.people_service_resolver import resolve_people_service
+from ...services.pinned_items_service import PinnedItemsService, PinnedSidebarItem
 from ..icon import load_icon
 from ..palette import SIDEBAR_ICON_COLOR_HEX
 
@@ -149,7 +150,7 @@ class AlbumTreeModel(QAbstractItemModel):
             return None
         item = self._item_from_index(index)
         if role == Qt.ItemDataRole.DisplayRole:
-            return item.title
+            return self._display_title(item)
         if role == Qt.ItemDataRole.ToolTipRole and item.album is not None:
             return str(item.album.path)
         if role == AlbumTreeRole.NODE_TYPE:
@@ -259,6 +260,11 @@ class AlbumTreeModel(QAbstractItemModel):
         self._add_trailing_static_nodes(self._root_item)
         self.endResetModel()
 
+    def retranslate_ui(self) -> None:
+        """Notify views that translated display text changed."""
+
+        self._emit_display_changed(self._root_item)
+
     def index_for_path(self, path: Path) -> QModelIndex:
         """Return the model index associated with *path*, if any."""
 
@@ -308,6 +314,37 @@ class AlbumTreeModel(QAbstractItemModel):
             if isinstance(item, AlbumTreeItem):
                 return item
         return self._root_item
+
+    def _display_title(self, item: AlbumTreeItem) -> str:
+        if item.node_type in {
+            NodeType.ACTION,
+            NodeType.HEADER,
+            NodeType.STATIC,
+        }:
+            return self._translated_fixed_title(item.title)
+        return item.title
+
+    def _translated_fixed_title(self, title: str) -> str:
+        translations = {
+            "Bind Basic Library…": tr("AlbumSidebar", "Bind Basic Library…"),
+            "Basic Library": tr("AlbumSidebar", "Basic Library"),
+            "All Photos": tr("AlbumSidebar", "All Photos"),
+            "Videos": tr("AlbumSidebar", "Videos"),
+            "Live Photos": tr("AlbumSidebar", "Live Photos"),
+            "Favorites": tr("AlbumSidebar", "Favorites"),
+            "People": tr("AlbumSidebar", "People"),
+            "Location": tr("AlbumSidebar", "Location"),
+            "Pinned": tr("AlbumSidebar", "Pinned"),
+            "Albums": tr("AlbumSidebar", "Albums"),
+            "Recently Deleted": tr("AlbumSidebar", "Recently Deleted"),
+        }
+        return translations.get(title, title)
+
+    def _emit_display_changed(self, parent_item: AlbumTreeItem) -> None:
+        for child in parent_item.children:
+            index = self.createIndex(child.row(), 0, child)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+            self._emit_display_changed(child)
 
     def _add_static_nodes(self, header: AlbumTreeItem, *, add_separator: bool = True) -> None:
         """Populate *header* with the built-in smart collections.

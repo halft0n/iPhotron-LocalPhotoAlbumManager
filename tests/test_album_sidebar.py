@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 from pathlib import Path
@@ -10,6 +9,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="Qt widgets not available", exc_
 
 from PySide6.QtWidgets import QApplication
 
+from iPhoto.gui.i18n import TranslationManager
 from iPhoto.gui.services.pinned_items_service import PinnedItemsService
 from iPhoto.gui.ui.menus.album_sidebar_menu import AlbumSidebarContextMenu
 from iPhoto.gui.ui.models.album_tree_model import NodeType
@@ -30,6 +30,12 @@ def qapp() -> QApplication:
 def _write_manifest(path: Path, title: str) -> None:
     payload = {"schema": "iPhoto/album@1", "title": title, "filters": {}}
     (path / ".iphoto.album.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _settings(tmp_path: Path) -> SettingsManager:
+    settings = SettingsManager(path=tmp_path / "settings.json")
+    settings.load()
+    return settings
 
 
 def test_programmatic_selection_suppresses_signals(tmp_path: Path, qapp: QApplication) -> None:
@@ -68,6 +74,48 @@ def test_programmatic_selection_suppresses_signals(tmp_path: Path, qapp: QApplic
     sidebar.select_path(album_dir)
     qapp.processEvents()
     assert not triggered_album, "Programmatic album selection must suppress signal"
+
+
+def test_sidebar_retranslate_updates_title_and_menu_labels(
+    tmp_path: Path,
+    qapp: QApplication,
+) -> None:
+    root = tmp_path / "Library"
+    album_dir = root / "Trip"
+    album_dir.mkdir(parents=True)
+    _write_manifest(album_dir, "Trip")
+    manager = LibraryRuntimeController()
+    manager.bind_path(root)
+    qapp.processEvents()
+
+    translations = TranslationManager(_settings(tmp_path))
+    translations.apply_language("zh-CN")
+    sidebar = AlbumSidebar(manager)
+    qapp.processEvents()
+    sidebar.retranslate_ui()
+
+    assert sidebar._title.text() == "基础图库"
+
+    album_index = sidebar.tree_model().index_for_path(album_dir)
+    item = sidebar.tree_model().item_from_index(album_index)
+    assert item is not None
+    menu = AlbumSidebarContextMenu(
+        sidebar,
+        sidebar._tree,
+        sidebar.tree_model(),
+        manager,
+        item,
+        sidebar._set_pending_selection,
+        sidebar.bindLibraryRequested.emit,
+    )
+    assert [action.text() for action in menu.actions() if not action.isSeparator()] == [
+        "固定相册",
+        "新建子相册…",
+        "重命名相册…",
+        "在文件管理器中显示",
+    ]
+
+    translations._remove_installed_translator(qapp)
 
 
 def test_programmatic_selection_can_emit_signals(tmp_path: Path, qapp: QApplication) -> None:

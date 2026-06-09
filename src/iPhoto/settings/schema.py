@@ -42,6 +42,10 @@ SETTINGS_SCHEMA: dict[str, Any] = {
                     "type": "string",
                     "enum": ["system", "light", "dark"],
                 },
+                "language": {
+                    "type": "string",
+                    "enum": ["system", "de", "zh-CN"],
+                },
                 "sidebar_width": {"type": "number", "minimum": 120},
                 "volume": {
                     "type": "number",
@@ -86,6 +90,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pinned_items_by_library": {},
     "ui": {
         "theme": "system",
+        "language": "system",
         "sidebar_width": 280,
         "volume": 75,
         "is_muted": False,
