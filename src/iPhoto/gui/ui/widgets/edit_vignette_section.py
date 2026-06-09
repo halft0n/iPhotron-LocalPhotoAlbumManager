@@ -34,7 +34,7 @@ class EditVignetteSection(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(self.EDGE_INSET, 0, self.EDGE_INSET, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(1)
 
         self._strength_slider = BWSlider(
             tr("EditVignette", "Strength"),

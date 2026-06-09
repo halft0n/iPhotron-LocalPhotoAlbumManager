@@ -84,7 +84,7 @@ class EditBWSection(QWidget):
         # Keep the manual sliders indented by 12px so they line up with peers.
         options_layout = QVBoxLayout(options_container)
         options_layout.setContentsMargins(12, 12, 12, 12)
-        options_layout.setSpacing(6)
+        options_layout.setSpacing(1)
 
         specs = [
             _SliderSpec("Intensity", "BW_Intensity", 0.0, 1.0, 0.5),
