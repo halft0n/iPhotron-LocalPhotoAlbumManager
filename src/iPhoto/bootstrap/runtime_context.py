@@ -12,6 +12,7 @@ from ..events.bus import EventBus
 if TYPE_CHECKING:  # pragma: no cover
     from ..di.container import DependencyContainer
     from ..gui.facade import AppFacade
+    from ..gui.i18n import TranslationManager
     from ..gui.ui.theme_manager import ThemeManager
     from ..infrastructure.services.library_asset_runtime import LibraryAssetRuntime
     from ..library.runtime_controller import LibraryRuntimeController
@@ -49,6 +50,14 @@ def _create_theme_manager(settings: "SettingsManager") -> "ThemeManager":
     return theme
 
 
+def _create_translation_manager(settings: "SettingsManager") -> "TranslationManager":
+    from ..gui.i18n import TranslationManager
+
+    translation = TranslationManager(settings)
+    translation.apply_language()
+    return translation
+
+
 def _create_asset_runtime() -> "LibraryAssetRuntime":
     from ..infrastructure.services.library_asset_runtime import LibraryAssetRuntime
 
@@ -70,6 +79,7 @@ class RuntimeContext:
     asset_runtime: "LibraryAssetRuntime" = field(default_factory=_create_asset_runtime)
     recent_albums: list[Path] = field(default_factory=list)
     defer_startup_tasks: bool = False
+    translation: "TranslationManager" = field(init=False)
     theme: "ThemeManager" = field(init=False)
     library_session: "LibrarySession | None" = field(init=False, default=None)
     _container: "DependencyContainer | None" = field(
@@ -80,6 +90,7 @@ class RuntimeContext:
     _pending_basic_library_path: Path | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
+        self.translation = _create_translation_manager(self.settings)
         self.theme = _create_theme_manager(self.settings)
         self.facade.bind_library(self.library)
 
@@ -161,9 +172,7 @@ class RuntimeContext:
                 "resume_startup_tasks: saved path does not exist: %s",
                 candidate,
             )
-            self.library.errorRaised.emit(
-                f"Basic Library path is unavailable: {candidate}"
-            )
+            self.library.errorRaised.emit(f"Basic Library path is unavailable: {candidate}")
 
     def open_library(self, root: Path) -> "LibrarySession":
         """Bind *root* as the active library and rebuild library-scoped adapters."""
@@ -347,9 +356,7 @@ class RuntimeContext:
         """Track *root* in the recent albums list, keeping the most recent first."""
 
         normalized = root.resolve()
-        self.recent_albums = [
-            entry for entry in self.recent_albums if entry != normalized
-        ]
+        self.recent_albums = [entry for entry in self.recent_albums if entry != normalized]
         self.recent_albums.insert(0, normalized)
         del self.recent_albums[10:]
         self.settings.set(

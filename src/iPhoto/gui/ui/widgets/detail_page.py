@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ....gui.i18n import tr
 from ..icon import load_icon
 from ..palette import SIDEBAR_TEXT_COLOR, viewer_surface_color
 from .edit_sidebar import EditSidebar
-from .face_name_overlay import FaceNameOverlayWidget
 from .edit_topbar import SegmentedTopBar
+from .face_name_overlay import FaceNameOverlayWidget
 from .filmstrip_view import FilmstripView
 from .gl_image_viewer import GLImageViewer
 from .live_badge import LiveBadge
@@ -95,7 +96,7 @@ class DetailPageWidget(QWidget):
         self.favorite_button = QToolButton(self)
         self.favorite_button.setEnabled(False)
         self.rotate_left_button = QToolButton(self)
-        self.edit_button = QPushButton("Edit", self)
+        self.edit_button = QPushButton(tr("DetailPage", "Edit"), self)
         self.edit_button.setEnabled(False)
 
         self.zoom_widget = QWidget(self)
@@ -108,7 +109,8 @@ class DetailPageWidget(QWidget):
 
         # Viewer widgets -----------------------------------------------------
         self.player_stack = QStackedWidget(self)
-        self.player_placeholder = QLabel("Select a photo or video to preview.", self.player_stack)
+        self._placeholder_default_text = self.default_placeholder_text()
+        self.player_placeholder = QLabel(self._placeholder_default_text, self.player_stack)
         self.image_viewer = image_viewer or GLImageViewer()
         if self.image_viewer.parent() not in (None, self.player_stack):
             self.image_viewer.setParent(None)
@@ -144,6 +146,67 @@ class DetailPageWidget(QWidget):
         self._build_player_area()
         self._build_edit_container(main_window, layout)
         layout.addWidget(self.filmstrip_view)
+        self.retranslate_ui()
+
+    @classmethod
+    def default_placeholder_text(cls) -> str:
+        return tr("DetailPage", "Select a photo or video to preview.")
+
+    def retranslate_ui(self) -> None:
+        self.back_button.setToolTip(tr("DetailPage", "Return to grid view"))
+        self.zoom_out_button.setToolTip(tr("DetailPage", "Zoom Out"))
+        self.zoom_slider.setToolTip(tr("DetailPage", "Zoom"))
+        self.zoom_in_button.setToolTip(tr("DetailPage", "Zoom In"))
+        self.info_button.setToolTip(tr("DetailPage", "Info"))
+        self.share_button.setToolTip(tr("DetailPage", "Share"))
+        self.favorite_button.setToolTip(tr("DetailPage", "Add to Favorites"))
+        self.rotate_left_button.setToolTip(tr("DetailPage", "Rotate Left"))
+        self.edit_button.setText(tr("DetailPage", "Edit"))
+        edit_adjust_action = getattr(self, "edit_adjust_action", None)
+        edit_crop_action = getattr(self, "edit_crop_action", None)
+        edit_mode_control = getattr(self, "edit_mode_control", None)
+        if edit_adjust_action is not None and edit_crop_action is not None:
+            edit_adjust_action.setText(tr("DetailPage", "Adjust"))
+            edit_crop_action.setText(tr("DetailPage", "Crop"))
+        if (
+            edit_mode_control is not None
+            and edit_adjust_action is not None
+            and edit_crop_action is not None
+        ):
+            edit_mode_control.setItems(
+                (
+                    edit_adjust_action.text(),
+                    edit_crop_action.text(),
+                )
+            )
+        edit_compare_button = getattr(self, "edit_compare_button", None)
+        if edit_compare_button is not None:
+            edit_compare_button.setToolTip(
+                tr("DetailPage", "Press and hold to preview the unedited photo")
+            )
+        edit_reset_button = getattr(self, "edit_reset_button", None)
+        if edit_reset_button is not None:
+            edit_reset_button.setText(tr("DetailPage", "Revert to Original"))
+            edit_reset_button.setToolTip(
+                tr("DetailPage", "Restore every adjustment to its original value")
+            )
+        edit_done_button = getattr(self, "edit_done_button", None)
+        if edit_done_button is not None:
+            edit_done_button.setText(tr("DetailPage", "Done"))
+        self.edit_rotate_left_button.setToolTip(tr("DetailPage", "Rotate counter-clockwise"))
+        default_placeholder_text = self.default_placeholder_text()
+        if (
+            self.player_stack.currentWidget() is self.player_placeholder
+            and self.player_placeholder.text() == self._placeholder_default_text
+        ):
+            self.player_placeholder.setText(default_placeholder_text)
+        self._placeholder_default_text = default_placeholder_text
+        self.player_bar.retranslate_ui()
+        for child_name in ("video_trim_bar", "edit_sidebar", "face_name_overlay"):
+            child = getattr(self, child_name, None)
+            method = getattr(child, "retranslate_ui", None)
+            if callable(method):
+                method()
 
     def _build_header(self, main_window: QWidget, parent_layout: QVBoxLayout) -> None:
         """Create the header row containing navigation and metadata controls."""
@@ -214,7 +277,6 @@ class DetailPageWidget(QWidget):
         self.zoom_slider.setPageStep(25)
         self.zoom_slider.setValue(100)
         self.zoom_slider.setFixedWidth(90)
-        self.zoom_slider.setToolTip("Zoom")
         zoom_layout.addWidget(self.zoom_slider)
 
         self._configure_header_button(self.zoom_in_button, "plus.svg", "Zoom In")
@@ -248,7 +310,6 @@ class DetailPageWidget(QWidget):
         self.rotate_left_button.setIconSize(HEADER_ICON_GLYPH_SIZE)
         self.rotate_left_button.setFixedSize(HEADER_BUTTON_SIZE)
         self.rotate_left_button.setAutoRaise(True)
-        self.rotate_left_button.setToolTip("Rotate Left")
         actions_layout.addWidget(self.rotate_left_button)
 
         self.edit_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -501,7 +562,6 @@ class DetailPageWidget(QWidget):
         self.edit_rotate_left_button.setIconSize(HEADER_ICON_GLYPH_SIZE)
         self.edit_rotate_left_button.setFixedSize(HEADER_BUTTON_SIZE)
         self.edit_rotate_left_button.setAutoRaise(True)
-        self.edit_rotate_left_button.setToolTip("Rotate counter-clockwise")
         right_controls_layout.addWidget(self.edit_rotate_left_button)
 
         self.edit_done_button.setObjectName("editDoneButton")

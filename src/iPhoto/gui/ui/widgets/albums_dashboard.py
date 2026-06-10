@@ -1,11 +1,13 @@
 """Dashboard view displaying all user albums."""
 
 from __future__ import annotations
+
 from collections import deque
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import (
+    QEvent,
     QObject,
     QPoint,
     QRunnable,
@@ -13,19 +15,17 @@ from PySide6.QtCore import (
     Qt,
     QThreadPool,
     Signal,
-    QEvent,
 )
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
-    QFontMetrics,
     QGuiApplication,
     QImage,
     QPainter,
     QPainterPath,
-    QPixmap,
     QPalette,
+    QPixmap,
     QRadialGradient,
 )
 from PySide6.QtWidgets import (
@@ -39,17 +39,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from iPhoto.gui.i18n import formatters, tr
 from iPhoto.gui.services.pinned_items_service import PinnedItemsService
+
+from ....application.services.album_manifest_service import Album
 from ....bootstrap.library_asset_query_service import LibraryAssetQueryService
 from ....errors import LibraryError
-from ....media_classifier import get_media_type, MediaType
-from ....application.services.album_manifest_service import Album
+from ....media_classifier import MediaType, get_media_type
 from ....utils.pathutils import ensure_work_dir
-from ..menus.album_sidebar_menu import _create_styled_input_dialog
-from ..tasks.thumbnail_loader import ThumbnailJob, generate_cache_path, stat_mtime_ns
 from ..icon import load_icon
+from ..menus.album_sidebar_menu import _create_styled_input_dialog
 from ..menus.core import MenuActionSpec, MenuContext, populate_menu
 from ..menus.style import apply_menu_style
+from ..tasks.thumbnail_loader import ThumbnailJob, generate_cache_path, stat_mtime_ns
 from ..theme_manager import DARK_THEME
 from . import dialogs
 from .flow_layout import FlowLayout
@@ -138,6 +140,7 @@ class AlbumCard(QFrame):
         super().__init__(parent)
         self.path = path
         self.title = title
+        self.count = count
         self.setMouseTracking(True)
         self._cursor_pos: QPoint | None = None
 
@@ -177,10 +180,11 @@ class AlbumCard(QFrame):
         self.set_title(title)
 
         # Count
-        self.count_label = QLabel(str(count))
+        self.count_label = QLabel()
         self.count_label.setStyleSheet(
             "color: #86868b; font-size: 13px; background: transparent;"
         )
+        self.set_count(count)
 
         self.text_layout.addWidget(self.title_label)
         self.text_layout.addWidget(self.count_label)
@@ -214,6 +218,12 @@ class AlbumCard(QFrame):
         if event.type() == QEvent.Type.PaletteChange:
             self._apply_theme()
         super().changeEvent(event)
+
+    def set_count(self, count: int) -> None:
+        """Update the stored album count and refresh its locale-aware label."""
+
+        self.count = count
+        self.count_label.setText(formatters.format_integer(count))
 
     def mouseMoveEvent(self, event) -> None:
         self._cursor_pos = event.position().toPoint()
@@ -350,7 +360,6 @@ class AlbumDataWorker(QRunnable):
         first_rel: str | None = None
 
         try:
-            index_root = self._library_root if self._library_root else self.node.path
             query_service = self._asset_query_service
             if query_service is None:
                 raise RuntimeError(
@@ -541,7 +550,7 @@ class AlbumsDashboard(QWidget):
         self.main_layout.setSpacing(20)
 
         # Header
-        self.header_label = QLabel("Albums")
+        self.header_label = QLabel()
         font = QFont()
         font.setPixelSize(22)
         font.setBold(True)
@@ -564,11 +573,12 @@ class AlbumsDashboard(QWidget):
         self.main_layout.addWidget(self.scroll_area)
 
         # Empty state placeholder
-        self.empty_label = QLabel(self.tr("No albums available"))
+        self.empty_label = QLabel()
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setStyleSheet("font-size: 16px;")
         self.empty_label.hide()
         self.main_layout.addWidget(self.empty_label)
+        self.retranslate_ui()
         self._apply_theme()
 
     def changeEvent(self, event) -> None:
@@ -626,6 +636,14 @@ class AlbumsDashboard(QWidget):
             )
             pool.start(worker)
 
+    def retranslate_ui(self) -> None:
+        """Refresh translated dashboard text."""
+
+        self.header_label.setText(tr("AlbumsDashboard", "Albums"))
+        self.empty_label.setText(tr("AlbumsDashboard", "No albums available"))
+        for card in self._cards.values():
+            card.set_count(card.count)
+
     def _on_album_data_ready(
         self, node: AlbumNode, count: int, cover_path: Path | None, root: Path, generation: int
     ) -> None:
@@ -637,7 +655,7 @@ class AlbumsDashboard(QWidget):
             return
 
         # Update count
-        card.count_label.setText(str(count))
+        card.set_count(count)
 
         # Load cover
         if cover_path:
@@ -696,12 +714,16 @@ class AlbumsDashboard(QWidget):
             action_specs=[
                 MenuActionSpec(
                     action_id="rename_album",
-                    label="Rename…",
+                    label=tr("AlbumsDashboard", "Rename…"),
                     on_trigger=lambda _ctx: self._prompt_rename_album(card),
                 ),
                 MenuActionSpec(
                     action_id="toggle_album_pin",
-                    label="Unpin Album" if self._is_album_pinned(card.path) else "Pin Album",
+                    label=(
+                        tr("AlbumsDashboard", "Unpin Album")
+                        if self._is_album_pinned(card.path)
+                        else tr("AlbumsDashboard", "Pin Album")
+                    ),
                     on_trigger=lambda _ctx: self._toggle_album_pin(card),
                     is_enabled=lambda _ctx: self._pin_actions_available(),
                 ),
@@ -735,15 +757,15 @@ class AlbumsDashboard(QWidget):
             return
         name, ok = _create_styled_input_dialog(
             self,
-            "Rename Album",
-            "New album name:",
+            tr("AlbumsDashboard", "Rename Album"),
+            tr("AlbumsDashboard", "New album name:"),
             text=card.title,
         )
         if not ok:
             return
         target_name = name.strip()
         if not target_name:
-            dialogs.show_warning(self, "Album name cannot be empty.")
+            dialogs.show_warning(self, tr("AlbumsDashboard", "Album name cannot be empty."))
             return
         try:
             self._library.rename_album(album, target_name)

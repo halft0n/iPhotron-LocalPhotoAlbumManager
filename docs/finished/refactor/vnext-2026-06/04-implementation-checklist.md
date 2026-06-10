@@ -31,7 +31,7 @@ ports/services、bootstrap session surfaces 和 infrastructure adapters。legacy
 
 主要文件：
 
-- `docs/refactor/*`
+- `docs/finished/refactor/vnext-2026-06/*`
 - `docs/architecture.md`
 - `tools/check_architecture.py`
 - `tests/architecture/*`
@@ -52,7 +52,7 @@ ports/services、bootstrap session surfaces 和 infrastructure adapters。legacy
 
 完成条件：
 
-- [x] `find docs/refactor -maxdepth 2 -type f | sort` 只显示 vNext 文档。
+- [x] 本归档目录只保留 vNext 文档。
 - [x] `python3 tools/check_architecture.py` 通过。
 - [x] 已知例外有明确 owner 和后续阶段。
 

@@ -9,6 +9,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...di.container import DependencyContainer
     from ...events.bus import EventBus
     from ...gui.facade import AppFacade
+    from ...gui.i18n import TranslationManager
     from ...gui.ui.theme_manager import ThemeManager
     from ...infrastructure.services.library_asset_runtime import LibraryAssetRuntime
     from ...library.runtime_controller import LibraryRuntimeController
@@ -23,6 +24,7 @@ class RuntimeEntryContract(Protocol):
     settings: "SettingsManager"
     library: "LibraryRuntimeController"
     facade: "AppFacade"
+    translation: "TranslationManager"
     theme: "ThemeManager"
     event_bus: "EventBus"
     container: "DependencyContainer"

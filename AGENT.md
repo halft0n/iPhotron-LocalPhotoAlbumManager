@@ -19,10 +19,9 @@ compatibility code is quarantined under `src/iPhoto/legacy/`.
   surfaces, domain values/pure services, or infrastructure adapters. GUI code
   is presentation and Qt transport only.
 
-The authoritative refactor status is tracked in:
-
-- `docs/refactor/04-implementation-checklist.md`
-- `docs/refactor/05-current-progress.md`
+The authoritative current architecture is tracked in `docs/architecture.md`.
+Completed vNext migration records are archived under
+`docs/finished/refactor/vnext-2026-06/`.
 
 ## 2. Product Invariants
 
@@ -108,6 +107,9 @@ State rules:
 - `global_index.db` is the current source of truth for asset scan rows,
   pagination, Live Photo roles, trash/favorite/hidden flags, face scan status,
   and the repository-backed user-state boundary.
+- Large-library gallery reads are SQL-first and windowed through collection
+  query APIs. Normal visible rows must be thumbnail-ready and carry a
+  `thumb_cache_key`.
 - `links.json` is derived compatibility materialization for Live Photo payloads;
   target runtime behavior should read roles through repository/session surfaces.
 - `cache/thumbs/` and People thumbnails are disposable.
@@ -197,6 +199,8 @@ State rules:
 
 - Thumbnail generation and cache lookup must not block the UI thread.
 - Memory/disk cache hits must avoid re-running generators.
+- Gallery-visible rows must not treat missing full thumbnail cache keys as
+  ready media. Old no-key rows belong on stale/backfill paths.
 - Thumbnail rendering may apply `.ipo` edit state, but durable edit persistence
   belongs behind edit sidecar/session services.
 
@@ -236,6 +240,10 @@ Use targeted regression tests for changed behavior:
 .venv/bin/python -m pytest tests/performance -q
 ```
 
+Before touching scan visible publishing, collection query performance, trash
+state, or move/restore optimistic UI behavior, read the matching guardrail under
+`docs/misc/`.
+
 Required guardrail expectations:
 
 - `application/` has no GUI or concrete persistence imports.
@@ -252,8 +260,7 @@ Known non-blocking warning currently documented by the refactor notes:
 
 - Keep `README.md` product-facing and concise.
 - Keep `docs/architecture.md` as the current architecture entry point.
-- Keep `docs/refactor/*` as the detailed vNext migration record and verification
-  log.
+- Keep completed refactor records under `docs/finished/refactor/`.
 - Do not treat archived refactor documents under `docs/finished/` as current
   implementation instructions.
 - Release validation may include manual Qt GUI smoke testing and opening an

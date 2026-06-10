@@ -7,6 +7,8 @@ from typing import Optional
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from iPhoto.gui.i18n import tr
+
 from ..models.edit_session import EditSession
 from .edit_strip import BWSlider
 
@@ -35,7 +37,7 @@ class EditDenoiseSection(QWidget):
         layout.setSpacing(8)
 
         self._slider = BWSlider(
-            "Amount",
+            tr("EditDenoise", "Amount"),
             parent=self,
             minimum=0.0,
             maximum=5.0,
@@ -47,6 +49,11 @@ class EditDenoiseSection(QWidget):
         self._slider.valueChanged.connect(self._on_slider_changed)
         self._slider.interactionStarted.connect(self.interactionStarted)
         self._slider.interactionFinished.connect(self._on_slider_interaction_finished)
+
+    def retranslate_ui(self) -> None:
+        """Refresh visible labels after a language change."""
+
+        self._slider.setName(tr("EditDenoise", "Amount"))
 
     # ------------------------------------------------------------------
     # Session binding

@@ -7,9 +7,9 @@ import pytest
 
 pytest.importorskip("PySide6", reason="PySide6 is required for context menu tests", exc_type=ImportError)
 
+from iPhoto.gui.services.restoration_service import RestoreBatch, RestoreScheduleResult
 from iPhoto.gui.ui.controllers.context_menu_controller import ContextMenuController
 from iPhoto.gui.ui.models.roles import Roles
-from iPhoto.gui.services.restoration_service import RestoreBatch, RestoreScheduleResult
 
 
 def _make_controller(

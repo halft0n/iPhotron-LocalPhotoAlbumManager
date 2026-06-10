@@ -8,6 +8,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
+from iPhoto.gui.i18n import formatters
+
 
 class BWSlider(QWidget):
     """Horizontal slider that renders a split-tone track and bold labels."""
@@ -198,7 +200,11 @@ class BWSlider(QWidget):
         left_rect = QRectF(track_rect.left() + 10, track_rect.top(), track_rect.width() / 2 - 12, track_height)
         right_rect = QRectF(track_rect.center().x(), track_rect.top(), track_rect.width() / 2 - 10, track_height)
         painter.drawText(left_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._name)
-        painter.drawText(right_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{self._value:.2f}")
+        painter.drawText(
+            right_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            formatters.format_decimal(self._value, precision=2),
+        )
 
         if self._hover and not self._dragging:
             self.setCursor(Qt.CursorShape.OpenHandCursor)

@@ -166,6 +166,10 @@ class Ui_MainWindow(object):
         self.theme_system = self.main_header.theme_system
         self.theme_light = self.main_header.theme_light
         self.theme_dark = self.main_header.theme_dark
+        self.language_group = self.main_header.language_group
+        self.language_system = self.main_header.language_system
+        self.language_de = self.main_header.language_de
+        self.language_zh_cn = self.main_header.language_zh_cn
 
         self.window_shell_layout.addWidget(self.window_chrome)
         self.window_shell_layout.addWidget(self.menu_bar_container)
@@ -289,22 +293,15 @@ class Ui_MainWindow(object):
     def retranslateUi(self, MainWindow: QMainWindow) -> None:  # noqa: N802 - Qt style
         """Apply translatable strings to the window."""
 
-        MainWindow.setWindowTitle(
-            QCoreApplication.translate("MainWindow", "iPhoto", None)
-        )
+        self.main_header.retranslate_ui()
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "iPhoto", None))
         self.window_title_label.setText(MainWindow.windowTitle())
-        self.minimize_button.setToolTip(
-            QCoreApplication.translate("MainWindow", "Minimize", None)
-        )
+        self.minimize_button.setToolTip(QCoreApplication.translate("MainWindow", "Minimize", None))
         self.fullscreen_button.setToolTip(
             QCoreApplication.translate("MainWindow", "Enter Full Screen", None)
         )
-        self.close_button.setToolTip(
-            QCoreApplication.translate("MainWindow", "Close", None)
-        )
-        self.selection_button.setText(
-            QCoreApplication.translate("MainWindow", "Select", None)
-        )
+        self.close_button.setToolTip(QCoreApplication.translate("MainWindow", "Close", None))
+        self.selection_button.setText(QCoreApplication.translate("MainWindow", "Select", None))
         self.selection_button.setToolTip(
             QCoreApplication.translate(
                 "MainWindow",
@@ -312,12 +309,8 @@ class Ui_MainWindow(object):
                 None,
             )
         )
-        self.edit_adjust_action.setText(
-            QCoreApplication.translate("MainWindow", "Adjust", None)
-        )
-        self.edit_crop_action.setText(
-            QCoreApplication.translate("MainWindow", "Crop", None)
-        )
+        self.edit_adjust_action.setText(QCoreApplication.translate("MainWindow", "Adjust", None))
+        self.edit_crop_action.setText(QCoreApplication.translate("MainWindow", "Crop", None))
         self.edit_mode_control.setItems(
             (
                 self.edit_adjust_action.text(),
@@ -341,15 +334,11 @@ class Ui_MainWindow(object):
                 None,
             )
         )
-        self.edit_done_button.setText(
-            QCoreApplication.translate("MainWindow", "Done", None)
-        )
+        self.edit_done_button.setText(QCoreApplication.translate("MainWindow", "Done", None))
         self.open_album_action.setText(
             QCoreApplication.translate("MainWindow", "Open Album Folder…", None)
         )
-        self.rescan_action.setText(
-            QCoreApplication.translate("MainWindow", "Rescan", None)
-        )
+        self.rescan_action.setText(QCoreApplication.translate("MainWindow", "Rescan", None))
         self.rebuild_links_action.setText(
             QCoreApplication.translate("MainWindow", "Rebuild Live Links", None)
         )
@@ -374,9 +363,7 @@ class Ui_MainWindow(object):
         self.wheel_action_navigate.setText(
             QCoreApplication.translate("MainWindow", "Navigate", None)
         )
-        self.wheel_action_zoom.setText(
-            QCoreApplication.translate("MainWindow", "Zoom", None)
-        )
+        self.wheel_action_zoom.setText(QCoreApplication.translate("MainWindow", "Zoom", None))
 
 
 __all__ = ["Ui_MainWindow"]

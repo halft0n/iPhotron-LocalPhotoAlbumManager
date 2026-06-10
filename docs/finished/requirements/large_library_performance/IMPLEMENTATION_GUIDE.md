@@ -1,8 +1,8 @@
 # 大型相册性能迁移开发实施指南
 
 > **版本:** 1.0 | **日期:** 2026-05-30  
-> **状态:** 未来开发实施指南  
-> **关联规格:** `docs/requirements/large_library_performance/REARCHITECTURE.md`  
+> **状态:** 已归档；核心阶段已完成并进入生产约束
+> **关联规格:** `docs/finished/requirements/large_library_performance/REARCHITECTURE.md`
 > **目标读者:** 负责扫描、数据库、Gallery UI、缩略图、启动流程和性能测试的开发人员
 
 ---
@@ -959,7 +959,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 ## 15. 关联文档
 
-- `docs/requirements/large_library_performance/REARCHITECTURE.md`
-- `docs/refactor/01-target-architecture-vnext.md`
-- `docs/refactor/28-performance-baseline.md`
+- `docs/finished/requirements/large_library_performance/REARCHITECTURE.md`
+- `docs/finished/refactor/vnext-2026-06/01-target-architecture-vnext.md`
+- `docs/finished/refactor/vnext-2026-06/28-performance-baseline.md`
 - `docs/requirements/scan_c_hotspot_optimization.md`

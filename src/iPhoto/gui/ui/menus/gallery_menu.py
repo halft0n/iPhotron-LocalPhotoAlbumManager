@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from iPhoto.gui.i18n import tr
+
 from .core import MenuActionSpec, MenuContext
 
 
@@ -33,31 +35,31 @@ def gallery_action_specs(
     selected_actions = [
         MenuActionSpec(
             action_id="copy",
-            label="Copy",
+            label=tr("GalleryMenu", "Copy"),
             on_trigger=handlers.copy_selection,
             is_visible=_has_selection,
         ),
         MenuActionSpec(
             action_id="reveal",
-            label="Reveal in File Manager",
+            label=tr("GalleryMenu", "Reveal in File Manager"),
             on_trigger=handlers.reveal_selection,
             is_visible=_has_selection,
         ),
         MenuActionSpec(
             action_id="export",
-            label="Export",
+            label=tr("GalleryMenu", "Export"),
             on_trigger=handlers.export_selection,
             is_visible=_has_selection,
         ),
         MenuActionSpec(
             action_id="set_as_cover",
-            label="Set as Cover",
+            label=tr("GalleryMenu", "Set as Cover"),
             on_trigger=handlers.set_as_cover,
             is_visible=handlers.set_as_cover_visible,
         ),
         MenuActionSpec(
             action_id="move_to",
-            label="Move to",
+            label=tr("GalleryMenu", "Move to"),
             is_visible=lambda ctx: _has_selection(ctx) and not ctx.is_recently_deleted,
             children=tuple(
                 MenuActionSpec(
@@ -74,13 +76,13 @@ def gallery_action_specs(
         ),
         MenuActionSpec(
             action_id="delete",
-            label="Delete",
+            label=tr("GalleryMenu", "Delete"),
             on_trigger=handlers.delete_selection,
             is_visible=lambda ctx: _has_selection(ctx) and not ctx.is_recently_deleted,
         ),
         MenuActionSpec(
             action_id="restore",
-            label="Restore",
+            label=tr("GalleryMenu", "Restore"),
             on_trigger=handlers.restore_selection,
             is_visible=lambda ctx: _has_selection(ctx) and ctx.is_recently_deleted,
         ),
@@ -88,13 +90,13 @@ def gallery_action_specs(
     empty_actions = [
         MenuActionSpec(
             action_id="paste",
-            label="Paste",
+            label=tr("GalleryMenu", "Paste"),
             on_trigger=handlers.paste_into_album,
             is_visible=lambda ctx: ctx.selection_kind == "empty",
         ),
         MenuActionSpec(
             action_id="open_folder_location",
-            label="Open Folder Location",
+            label=tr("GalleryMenu", "Open Folder Location"),
             on_trigger=handlers.open_current_folder,
             is_visible=lambda ctx: ctx.selection_kind == "empty",
         ),

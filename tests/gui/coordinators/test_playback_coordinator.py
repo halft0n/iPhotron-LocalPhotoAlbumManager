@@ -794,6 +794,56 @@ def test_refresh_info_panel_sets_loading_state_and_queues_background_enrichment(
     )
 
 
+def test_refresh_info_panel_batches_visible_panel_updates() -> None:
+    class _FakePanelUpdate:
+        def __init__(self, calls: list[str]) -> None:
+            self._calls = calls
+
+        def __enter__(self):
+            self._calls.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            self._calls.append("exit")
+            return False
+
+    class _FakeInfoPanel:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def content_update(self):
+            return _FakePanelUpdate(self.calls)
+
+        def set_location_capability(self, **_kwargs) -> None:
+            self.calls.append("location")
+
+        def set_asset_metadata(self, _metadata) -> None:
+            self.calls.append("metadata")
+
+        def set_location_busy(self, _busy: bool) -> None:
+            self.calls.append("busy")
+
+        def set_asset_faces(self, _faces) -> None:
+            self.calls.append("faces")
+
+    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
+    panel = _FakeInfoPanel()
+    coordinator._info_panel = panel
+    coordinator._queue_info_panel_metadata_enrichment = Mock()
+
+    PlaybackCoordinator._refresh_info_panel(
+        coordinator,
+        {
+            "abs": "/fake/image.jpg",
+            "rel": "image.jpg",
+            "name": "image.jpg",
+            "is_video": False,
+        },
+    )
+
+    assert panel.calls == ["enter", "location", "metadata", "busy", "faces", "exit"]
+
+
 def test_refresh_info_panel_uses_cached_metadata_without_queueing_worker() -> None:
     coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
     coordinator._info_panel = Mock()

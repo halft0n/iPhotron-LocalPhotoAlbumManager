@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -17,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from iPhoto.gui.i18n import tr
 from iPhoto.people.repository import PersonSummary
 
 from ..styles import modern_scrollbar_style
@@ -41,7 +51,7 @@ class MergeConfirmDialog(QDialog):
         *,
         title_text: str | None = None,
         body_text: str | None = None,
-        confirm_text: str = "Merge Photos",
+        confirm_text: str | None = None,
     ) -> None:
         super().__init__(parent.window() if parent is not None else None)
         self._people_count = max(2, int(people_count))
@@ -57,7 +67,11 @@ class MergeConfirmDialog(QDialog):
         self._panel = QFrame(self)
         self._panel.setFixedWidth(356)
         panel_bg = "rgba(23, 27, 39, 0.98)" if self._dark_mode else "rgba(255, 255, 255, 0.94)"
-        panel_border = "rgba(255, 255, 255, 0.08)" if self._dark_mode else "rgba(255, 255, 255, 0.65)"
+        panel_border = (
+            "rgba(255, 255, 255, 0.08)"
+            if self._dark_mode
+            else "rgba(255, 255, 255, 0.65)"
+        )
         self._panel.setStyleSheet(
             f"""
             QFrame {{
@@ -78,11 +92,16 @@ class MergeConfirmDialog(QDialog):
         panel_layout.setSpacing(16)
 
         text_width = self._panel.width() - 44
-        resolved_title = title_text or f"Merge All Photos of These\n{self._people_count} People?"
-        resolved_body = body_text or (
-            f"By merging photos of these {self._people_count} people, "
-            "they will be recognized as the same person."
-        )
+        resolved_title = title_text or tr(
+            "PeopleDashboard",
+            "Merge All Photos of These\n{count} People?",
+        ).format(count=self._people_count)
+        resolved_body = body_text or tr(
+            "PeopleDashboard",
+            "By merging photos of these {count} people, they will be recognized as "
+            "the same person.",
+        ).format(count=self._people_count)
+        resolved_confirm = confirm_text or tr("PeopleDashboard", "Merge Photos")
 
         title_label = QLabel(resolved_title)
         title_label.setWordWrap(True)
@@ -109,7 +128,7 @@ class MergeConfirmDialog(QDialog):
             f"color: {'#DDE3F3' if self._dark_mode else 'rgba(17, 17, 17, 0.84)'};"
         )
 
-        merge_button = QPushButton(confirm_text)
+        merge_button = QPushButton(resolved_confirm)
         merge_button.setCursor(Qt.CursorShape.PointingHandCursor)
         merge_button.setFixedHeight(42)
         merge_button.setStyleSheet(
@@ -131,13 +150,28 @@ class MergeConfirmDialog(QDialog):
             """
         )
 
-        cancel_button = QPushButton("Cancel")
+        cancel_button = QPushButton(tr("PeopleDashboard", "Cancel"))
         cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_button.setFixedHeight(40)
+        cancel_background = (
+            "rgba(255, 255, 255, 0.08)"
+            if self._dark_mode
+            else "rgba(243, 243, 244, 0.98)"
+        )
+        cancel_hover_background = (
+            "rgba(255, 255, 255, 0.13)"
+            if self._dark_mode
+            else "rgba(235, 235, 236, 0.98)"
+        )
+        cancel_pressed_background = (
+            "rgba(255, 255, 255, 0.18)"
+            if self._dark_mode
+            else "rgba(224, 224, 226, 0.98)"
+        )
         cancel_button.setStyleSheet(
             f"""
             QPushButton {{
-                background: {'rgba(255, 255, 255, 0.08)' if self._dark_mode else 'rgba(243, 243, 244, 0.98)'};
+                background: {cancel_background};
                 color: {'#F4F6FB' if self._dark_mode else '#2E2E2E'};
                 border: none;
                 border-radius: 20px;
@@ -145,10 +179,10 @@ class MergeConfirmDialog(QDialog):
                 font-weight: 500;
             }}
             QPushButton:hover {{
-                background: {'rgba(255, 255, 255, 0.13)' if self._dark_mode else 'rgba(235, 235, 236, 0.98)'};
+                background: {cancel_hover_background};
             }}
             QPushButton:pressed {{
-                background: {'rgba(255, 255, 255, 0.18)' if self._dark_mode else 'rgba(224, 224, 226, 0.98)'};
+                background: {cancel_pressed_background};
             }}
             """
         )
@@ -279,7 +313,11 @@ class GroupAvatarTile(QWidget):
         self.update()
 
     def _avatar_pixmap(self) -> QPixmap | None:
-        if self._avatar is None and self._cover_cache_key is None and self.summary.thumbnail_path is not None:
+        if (
+            self._avatar is None
+            and self._cover_cache_key is None
+            and self.summary.thumbnail_path is not None
+        ):
             self._cover_cache_key, self._avatar = request_cover_pixmap(
                 self.summary.thumbnail_path,
                 (AVATAR_SIZE * 2, AVATAR_SIZE * 2),
@@ -357,9 +395,9 @@ class GroupPeopleDialog(QDialog):
         *,
         initial_selected_ids: list[str] | tuple[str, ...] = (),
         dark_mode: bool | None = None,
-        title_text: str = "People",
-        prompt_text: str = "Select People",
-        confirm_text: str = "Add",
+        title_text: str | None = None,
+        prompt_text: str | None = None,
+        confirm_text: str | None = None,
         min_selection: int = 2,
         max_selection: int | None = None,
         parent: QWidget | None = None,
@@ -376,9 +414,12 @@ class GroupPeopleDialog(QDialog):
         self._max_selection = None if max_selection is None else max(1, int(max_selection))
         if self._max_selection is not None:
             self._min_selection = min(self._min_selection, self._max_selection)
+        resolved_title = title_text or tr("PeopleDashboard", "People")
+        resolved_prompt = prompt_text or tr("PeopleDashboard", "Select People")
+        resolved_confirm = confirm_text or tr("PeopleDashboard", "Add")
 
         self.setModal(True)
-        self.setWindowTitle(title_text)
+        self.setWindowTitle(resolved_title)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(920, 640)
@@ -417,7 +458,7 @@ class GroupPeopleDialog(QDialog):
         panel_layout.setContentsMargins(20, 12, 20, 16)
         panel_layout.setSpacing(14)
 
-        title = QLabel(title_text)
+        title = QLabel(resolved_title)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(f"color: {text_primary}; font-size: 14px; font-weight: 800;")
         panel_layout.addWidget(title)
@@ -432,8 +473,10 @@ class GroupPeopleDialog(QDialog):
         # widgets reliably (this mirrors how other pages apply the style).
         self._scroll.setObjectName("GroupPeopleDialogScroll")
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll_name = self._scroll.objectName()
         extra_selectors = (
-            f", #{self._scroll.objectName()} QScrollBar:vertical, #{self._scroll.objectName()} QScrollBar:horizontal"
+            f", #{scroll_name} QScrollBar:vertical, "
+            f"#{scroll_name} QScrollBar:horizontal"
         )
         scroll_style = modern_scrollbar_style(
             scrollbar_base,
@@ -458,14 +501,14 @@ class GroupPeopleDialog(QDialog):
         footer.setSpacing(12)
         footer.addStretch(1)
 
-        prompt = QLabel(prompt_text)
+        prompt = QLabel(resolved_prompt)
         prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         prompt.setStyleSheet(f"color: {text_secondary}; font-size: 13px; font-weight: 700;")
         footer.addWidget(prompt)
         footer.addStretch(1)
 
-        self.cancel_button = QPushButton("Cancel")
-        self.add_button = QPushButton(confirm_text)
+        self.cancel_button = QPushButton(tr("PeopleDashboard", "Cancel"))
+        self.add_button = QPushButton(resolved_confirm)
         for button in (self.cancel_button, self.add_button):
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setFixedHeight(38)

@@ -7,6 +7,8 @@ from typing import Optional
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from iPhoto.gui.i18n import tr
+
 from ..models.edit_session import EditSession
 from .edit_strip import BWSlider
 
@@ -32,10 +34,10 @@ class EditVignetteSection(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(self.EDGE_INSET, 0, self.EDGE_INSET, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(1)
 
         self._strength_slider = BWSlider(
-            "Strength",
+            tr("EditVignette", "Strength"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -44,7 +46,7 @@ class EditVignetteSection(QWidget):
         layout.addWidget(self._strength_slider)
 
         self._radius_slider = BWSlider(
-            "Radius",
+            tr("EditVignette", "Radius"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -53,7 +55,7 @@ class EditVignetteSection(QWidget):
         layout.addWidget(self._radius_slider)
 
         self._softness_slider = BWSlider(
-            "Softness",
+            tr("EditVignette", "Softness"),
             parent=self,
             minimum=0.0,
             maximum=1.0,
@@ -66,6 +68,13 @@ class EditVignetteSection(QWidget):
             slider.valueChanged.connect(self._on_slider_changed)
             slider.interactionStarted.connect(self.interactionStarted)
             slider.interactionFinished.connect(self._on_slider_interaction_finished)
+
+    def retranslate_ui(self) -> None:
+        """Refresh visible labels after a language change."""
+
+        self._strength_slider.setName(tr("EditVignette", "Strength"))
+        self._radius_slider.setName(tr("EditVignette", "Radius"))
+        self._softness_slider.setName(tr("EditVignette", "Softness"))
 
     # ------------------------------------------------------------------
     # Session binding

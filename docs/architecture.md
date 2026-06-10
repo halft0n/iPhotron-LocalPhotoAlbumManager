@@ -6,7 +6,8 @@ one process-level `RuntimeContext` owns one active `LibrarySession`, and GUI,
 CLI, watchers, and workers enter behavior through application surfaces rather
 than legacy facades.
 
-For detailed migration records and verification history, see `docs/refactor/`.
+For completed migration records and verification history, see
+`docs/finished/refactor/vnext-2026-06/`.
 
 ## Status
 
@@ -136,12 +137,20 @@ production runtime -> iPhoto.models.*
 ```text
 RuntimeContext
   settings
+  translation
   theme
-  recent_libraries
+  library
+  facade
+  event_bus
+  asset_runtime
+  recent_albums
+  defer_startup_tasks
+  container
   library_session: LibrarySession | None
   open_library(root)
   close_library()
   resume_startup_tasks()
+  remember_album(root)
 ```
 
 `LibrarySession` owns library-scoped adapters and exposes application-facing
@@ -150,6 +159,7 @@ surfaces.
 ```text
 LibrarySession
   library_root
+  state_repository
   assets
   state
   asset_queries
@@ -164,12 +174,22 @@ LibrarySession
   map_interactions
   edit
   locations
+  assign_location_service()
   shutdown()
 ```
+
+CLI and other non-GUI callers create the same session boundary through
+`create_headless_library_session(root)`.
 
 Production GUI and CLI do not create standalone fallback services. If no active
 session exists, GUI services should fail explicitly or no-op safely according to
 their presentation responsibility.
+
+`TranslationManager` is created after settings and before theme initialization.
+It reads `ui.language`, installs the active Qt translator, exposes
+`languageChanged`, and falls back to English when the requested or system
+language has no bundled resource. The active stored language values are
+`system`, `de`, and `zh-CN`; the language menu presents `system` as `English`.
 
 ## Layer Boundaries
 
@@ -190,17 +210,47 @@ Current public boundary names include:
 
 | Port | Responsibility |
 | --- | --- |
+| `AlbumRepositoryPort` | Folder-local album manifest read/write without exposing legacy shims upstream. |
 | `AssetRepositoryPort` | Asset query, count, scan merge, state update, and transaction semantics for the current library store. |
+| `AssetFavoriteQueryPort` | Favorite-state reads through a session-owned query surface. |
+| `AssetStateServicePort` | Durable asset-state commands such as favorite toggles. |
+| `EditServicePort` | Session-scoped edit sidecar and render-state surface. |
+| `EditSidecarPort` | `.ipo` read/write and edit state persistence. |
 | `LibraryStateRepositoryPort` | Durable library user-state boundary for favorites, hidden/trash, pinned/order, and related state. |
+| `LocationAssetServicePort` | Session-bound geotagged asset queries. |
+| `LocationMetadataPort` | Explicit location assignment metadata write/read-back boundary. |
 | `MediaScannerPort` | Media discovery and normalized scan candidates without persistence ownership. |
 | `MetadataReaderPort` | Image/video metadata reads. |
 | `MetadataWriterPort` | Explicit best-effort metadata writes such as Assign Location GPS write-back. |
-| `ThumbnailRendererPort` | Thumbnail/preview generation without GUI ownership. |
-| `PeopleIndexPort` | People scan candidate enqueue, snapshot commit, and People/group queries. |
-| `MapRuntimePort` | Maps extension availability and runtime adapter selection. |
-| `EditSidecarPort` | `.ipo` read/write and edit state persistence. |
-| `LocationAssetServicePort` | Session-bound geotagged asset queries. |
 | `MapInteractionServicePort` | Marker-click and map interaction semantics. |
+| `MapRuntimePort` | Maps extension availability and runtime adapter selection. |
+| `PeopleAssetRepositoryPort` | Asset-index reads and face-status updates used by the People bounded context. |
+| `PeopleIndexPort` | People scan candidate enqueue, snapshot commit, and People/group queries. |
+| `PinnedStateRepositoryPort` | Pinned sidebar state persistence across libraries. |
+| `TaskSchedulerPort` | Background task submission and cancellation boundary. |
+| `ThumbnailRendererPort` | Thumbnail/preview generation without GUI ownership. |
+
+### Large Library Query And Scan Contracts
+
+Large-library browsing is part of the current production architecture, not a
+future side design. The active query path is SQL-first and windowed:
+
+- `CollectionQuery`, `PageCursor`, `PageResult`, and `WindowResult` describe
+  collection intent, keyset pages, and bounded viewport windows.
+- `LibraryAssetQueryService` converts supported `AssetQuery` reads to
+  repository-backed collection SQL for All Photos, albums, favorites, videos,
+  maps/GPS, media type, and date filters.
+- `GalleryCollectionStore` treats `asset_at()` as cache-only and loads bounded
+  windows through `read_query_asset_window()`; direct row lookup uses
+  `find_row_by_path()` rather than scanning the model.
+- Normal gallery collections default to `thumbnail_state='ready'` and require a
+  non-empty `thumb_cache_key`; stale, pending, failed, or old no-key rows are
+  repair/backfill candidates, not visible media grid rows.
+- Scan publishing uses `ScanBatchCommitted`, split into small ready-row batches
+  after DB commit. Production code must not restore the old `scanChunkReady`
+  transport for real-time UI updates.
+- `scan_jobs` and `scan_events` persist job state, stage changes, batch commit
+  metadata, and stage timing for scan observability.
 
 ### Infrastructure
 
@@ -217,6 +267,26 @@ coordinators, menus, shortcuts, Qt workers, and signal adapters. GUI code calls
 session/application surfaces and does not directly write durable state or call
 concrete repository singletons.
 
+User-visible GUI text goes through the Qt translation boundary. New strings
+should use `iPhoto.gui.i18n.tr(context, source_text)` or
+`QCoreApplication.translate(...)` with a stable context. Long-lived widgets
+refresh translated labels through `retranslate_ui()`; the main window wires
+`TranslationManager.languageChanged` to `retranslate_ui_tree()` so runtime
+language switches update menus, tooltips, pages, and status text without
+rebuilding the active library session. Business logic must use stable command
+ids, node types, callbacks, or `QAction.data()` rather than translated labels.
+
+Bundled i18n resources live in `src/iPhoto/resources/i18n/`:
+
+| Resource | Responsibility |
+| --- | --- |
+| `languages.json` | Advertises supported UI language choices and Qt locales. |
+| `iPhoto_de.ts` / `iPhoto_zh_CN.ts` | Qt Linguist source translations. |
+| `iPhoto_de.qm` / `iPhoto_zh_CN.qm` | Compiled translators loaded at runtime. |
+
+Package data includes `.ts` and `.qm` files so editable installs and packaged
+builds can load the same resources.
+
 ### Library Runtime
 
 `library/` contains the production runtime controller, album tree/watch shells,
@@ -227,8 +297,9 @@ It is not a legacy manager facade.
 
 - `people/`: optional face detection/clustering runtime, People repositories,
   stable People state, manual faces, groups, covers, and People service API.
-- `maps/`: optional offline map runtime, tile parsing, OBF/native
-  widget/helper integration, search, and map rendering internals.
+- `src/maps`: optional offline map runtime, tile parsing, OBF/native
+  widget/helper integration, search, and map rendering internals. GUI map
+  views construct concrete map widgets through `map_widget_factory`.
 - `core/`: editing math, filters, geometry, preview backends, export transforms,
   raw loading, and Live Photo pairing rules.
 - `cache/index_store/`: current global SQLite index implementation used behind
@@ -247,7 +318,8 @@ Each library root owns a `.iPhoto/` workspace.
 | `.iPhoto/faces/face_state.db` | Durable People user state: names, covers, hidden flags, order, groups, pinned state, group covers, and manual faces. |
 | `.iPhoto/faces/thumbnails/` | Rebuildable cropped face thumbnails. |
 | `.ipo` sidecars | Durable non-destructive edit instructions next to source media. |
-| `.iphoto.album.json` / `.iphoto.album` / `.iPhoto/manifest.json` | Folder-local album metadata and marker compatibility formats. |
+| `.iphoto.album.json` / `.iPhoto/manifest.json` | Folder-local album metadata formats. |
+| `.iphoto.album` | Legacy album marker compatibility file. |
 
 Implementation stages may continue storing scan facts and some user state in the
 same SQLite file, but repository APIs and merge behavior must maintain the
@@ -282,11 +354,11 @@ sequenceDiagram
     participant Query as Asset Query Surface
     participant Repo as AssetRepositoryPort
 
-    VM->>Session: request collection page
-    Session->>Query: execute query/count/page
-    Query->>Repo: read persisted rows
-    Repo-->>Query: rows + count
-    Query-->>VM: DTO page
+    VM->>Session: request visible window
+    Session->>Query: CollectionQuery / AssetQuery
+    Query->>Repo: read_collection_window()
+    Repo-->>Query: WindowResult rows + count + revision
+    Query-->>VM: bounded DTO window
 ```
 
 GUI viewmodels may cache window/selection state, but repository/session surfaces
@@ -309,13 +381,15 @@ sequenceDiagram
     Scan->>Scanner: discover media
     Scanner-->>Scan: scan chunks
     Scan->>Repo: merge scan rows
+    Scan->>Repo: append scan job/event records
     Scan->>People: enqueue eligible rows
     Scan->>Pairing: refresh roles/materialization
-    Scan-->>Trigger: progress/result
+    Scan-->>Trigger: progress/result + ScanBatchCommitted
 ```
 
 Scanning has one application use case. Qt workers adapt threading/progress, and
-CLI uses the same session surface without Qt.
+CLI uses the same session surface without Qt. UI scan batches are ready-only and
+carry full thumbnail cache keys so visible media rows are immediately drawable.
 
 ### Assign Location
 
@@ -384,6 +458,7 @@ Run:
 
 ```bash
 python3 tools/check_architecture.py
+python tools/check_i18n_strings.py src/iPhoto/gui src/maps
 .venv/bin/python -m pytest tests/architecture -q
 ```
 
@@ -396,6 +471,8 @@ The guardrails enforce:
 - `infrastructure/` does not import GUI;
 - production runtime does not import quarantined legacy paths or old model
   shims.
+- high-risk GUI APIs do not receive direct English literals that bypass the
+  translation boundary.
 
 The GitHub Actions workflow also runs `python tools/check_architecture.py`
 before the broader test suite.
