@@ -13,7 +13,12 @@ from iPhoto.domain.models import Asset, MediaType
 from iPhoto.domain.models.query import AssetQuery, WindowResult
 from iPhoto.gui.viewmodels.asset_dto_converter import scan_row_to_dto
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
-from iPhoto.gui.viewmodels.gallery_window_loader import GalleryWindowResult
+from iPhoto.gui.viewmodels.gallery_window_loader import (
+    GalleryWindowRequest,
+    GalleryWindowResult,
+    _GalleryWindowSignals,
+    _GalleryWindowWorker,
+)
 from iPhoto.library.runtime_controller import GeotaggedAsset
 
 
@@ -424,6 +429,7 @@ def test_thumbnail_backfill_completion_releases_requested_window(tmp_path: Path)
     store.load_selection(tmp_path, query=AssetQuery())
     store._thumbnail_backfill_windows = {(0, store.MIN_WINDOW_SIZE)}
     store._thumbnail_backfill_pending = True
+    store._pending_scan_refresh = True
     batch = SimpleNamespace(
         job_id=f"thumbnail-backfill:{tmp_path}:0:{store.MIN_WINDOW_SIZE}",
         root=tmp_path,
@@ -432,10 +438,10 @@ def test_thumbnail_backfill_completion_releases_requested_window(tmp_path: Path)
         rows=[],
     )
 
-    assert store.record_scan_batch(batch) is True
+    assert store.record_scan_batch(batch) is False
     assert store._thumbnail_backfill_windows == set()
     assert store._thumbnail_backfill_pending is False
-    assert store._pending_scan_refresh is True
+    assert store._pending_scan_refresh is False
 
 
 def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
@@ -553,6 +559,150 @@ def test_async_ensure_row_loaded_only_schedules_window() -> None:
     assert store.ensure_row_loaded(700) is False
     assert service.read_calls == []
     assert len(requests) == 1
+
+
+def test_async_ensure_row_loaded_emits_when_requested_row_arrives() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 1_000
+    requests.clear()
+    loaded = []
+    store.row_loaded.connect(loaded.append)
+
+    assert store.ensure_row_loaded(700) is False
+    request = requests[-1]
+    dto = scan_row_to_dto(
+        Path("."),
+        "deep.jpg",
+        {"id": "deep", "rel": "deep.jpg", "media_type": 0},
+    )
+    assert dto is not None
+
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=request.generation,
+            first=request.view_first,
+            last=700,
+            rows={700: dto},
+            total_count=1_000,
+            collection_revision=request.collection_revision,
+            requested_revision=request.collection_revision,
+        )
+    )
+    assert loaded == [700]
+
+
+def test_async_window_preserves_optimistic_move_destination(tmp_path: Path, qapp) -> None:
+    del qapp
+    root = tmp_path / "Library"
+    source_root = root / "Album"
+    target_root = root / "Target"
+    source_root.mkdir(parents=True)
+    target_root.mkdir()
+    assets = [
+        Asset(
+            id="moving",
+            album_id="a",
+            path=Path("Album/moving.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        ),
+        Asset(
+            id="existing",
+            album_id="b",
+            path=Path("Album/existing.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        ),
+    ]
+    service = _FakeQueryService(assets, library_root=root)
+    store = GalleryCollectionStore(service, library_root=root)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(root, query=AssetQuery())
+
+    removed_rows, inserted = store.apply_optimistic_move(
+        [source_root / "moving.jpg"],
+        target_root,
+        is_delete=False,
+    )
+    store.remove_rows(removed_rows, emit=False)
+    store.append_dtos(inserted)
+
+    requests: list[GalleryWindowRequest] = []
+    store.set_window_request_handler(requests.append)
+    store.prioritize_rows(0, 1)
+
+    request = requests[-1]
+    assert [dto.abs_path for dto in request.pending_insertions] == [
+        target_root / "moving.jpg"
+    ]
+
+    results = []
+    signals = _GalleryWindowSignals()
+    signals.completed.connect(results.append)
+    _GalleryWindowWorker(request, signals).run()
+
+    assert results[0].total_count == 2
+    assert [dto.abs_path for dto in results[0].rows.values()] == [
+        root / "Album" / "existing.jpg",
+        target_root / "moving.jpg",
+    ]
+
+
+def test_async_window_fetches_replacement_rows_for_pending_sources(qapp) -> None:
+    del qapp
+
+    class _WindowService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def read_gallery_asset_window(
+            self,
+            root: Path,
+            query: AssetQuery,
+            first: int,
+            limit: int,
+        ) -> WindowResult:
+            del root, query
+            self.calls.append((first, limit))
+            return WindowResult(
+                first=first,
+                rows=[
+                    {"id": str(index), "rel": f"{index}.jpg", "media_type": 0}
+                    for index in range(4)
+                ],
+                total_count=4,
+                collection_revision=1,
+            )
+
+    service = _WindowService()
+    request = GalleryWindowRequest(
+        generation=1,
+        root=Path("/library"),
+        query=AssetQuery(),
+        query_service=service,
+        view_first=0,
+        raw_first=0,
+        limit=3,
+        pending_source_ids=frozenset({"1"}),
+        pending_source_count=1,
+        request_backfill=False,
+    )
+    results = []
+    signals = _GalleryWindowSignals()
+    signals.completed.connect(results.append)
+
+    _GalleryWindowWorker(request, signals).run()
+
+    assert service.calls == [(0, 4)]
+    assert results[0].last == 2
+    assert results[0].total_count == 3
+    assert [dto.id for dto in results[0].rows.values()] == ["0", "2", "3"]
 
 
 def test_row_for_path_uses_query_lookup_without_scanning_batches() -> None:

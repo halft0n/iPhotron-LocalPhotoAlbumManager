@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,16 @@ class _GalleryWindowSignals(QObject):
     completed = Signal(object)
 
 
+def _dto_identity_keys(dto: AssetDTO) -> set[str]:
+    keys = {
+        f"abs:{os.path.normcase(os.path.abspath(os.fspath(dto.abs_path)))}",
+        f"rel:{dto.rel_path.as_posix()}",
+    }
+    if dto.id:
+        keys.add(f"id:{dto.id}")
+    return keys
+
+
 class _GalleryWindowWorker(QRunnable):
     def __init__(self, request: GalleryWindowRequest, signals: _GalleryWindowSignals) -> None:
         super().__init__()
@@ -63,7 +74,7 @@ class _GalleryWindowWorker(QRunnable):
                 request.root,
                 request.query,
                 request.raw_first,
-                request.limit,
+                request.limit + request.pending_source_count,
             )
 
             rows: dict[int, AssetDTO] = {}
@@ -74,15 +85,31 @@ class _GalleryWindowWorker(QRunnable):
                 dto = scan_row_to_dto(request.root, rel, raw_row)
                 if dto is None or str(dto.id) in request.pending_source_ids:
                     continue
+                if len(rows) >= request.limit:
+                    break
                 rows[request.view_first + len(rows)] = dto
 
+            loaded_count = len(rows)
+            existing_keys = {
+                key
+                for dto in rows.values()
+                for key in _dto_identity_keys(dto)
+            }
+            pending_insertions: list[AssetDTO] = []
+            for dto in request.pending_insertions:
+                dto_keys = _dto_identity_keys(dto)
+                if existing_keys.intersection(dto_keys):
+                    continue
+                pending_insertions.append(dto)
+                existing_keys.update(dto_keys)
+
             total_count = max(0, int(window.total_count) - request.pending_source_count)
-            total_count += len(request.pending_insertions)
-            insertion_start = max(0, total_count - len(request.pending_insertions))
-            for offset, dto in enumerate(request.pending_insertions):
+            total_count += len(pending_insertions)
+            insertion_start = max(0, total_count - len(pending_insertions))
+            for offset, dto in enumerate(pending_insertions):
                 rows[insertion_start + offset] = dto
 
-            last = request.view_first + len(window.rows) - 1
+            last = request.view_first + loaded_count - 1
             self._signals.completed.emit(
                 GalleryWindowResult(
                     generation=request.generation,

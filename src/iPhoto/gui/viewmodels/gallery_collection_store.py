@@ -102,6 +102,7 @@ class GalleryCollectionStore:
         self.window_changed = Signal()
         self.count_changed = Signal()
         self.row_changed = Signal()
+        self.row_loaded = Signal()
         self.thumbnail_backfill_scheduled = Signal()
 
         self._asset_query_service = asset_query_service
@@ -128,6 +129,7 @@ class GalleryCollectionStore:
         self._collection_revision = 0
         self._request_generation = 0
         self._window_request_handler: Callable[[GalleryWindowRequest], None] | None = None
+        self._pending_row_loads: set[int] = set()
 
     def set_library_root(self, root: Optional[Path]) -> None:
         if self._library_root == root:
@@ -281,6 +283,7 @@ class GalleryCollectionStore:
         if self._current_query is None:
             return False
         if self._window_request_handler is not None:
+            self._pending_row_loads.add(row)
             self._request_async_window(row, row)
             return False
         if self._total_count == 0 and self._window_range is None:
@@ -586,6 +589,15 @@ class GalleryCollectionStore:
         self._row_cache = dict(result.rows)
         self._total_count = max(0, int(result.total_count))
         self._window_range = None if self._total_count <= 0 else (result.first, result.last)
+        loaded_rows = sorted(self._pending_row_loads.intersection(self._row_cache))
+        completed_pending_rows = {
+            row
+            for row in self._pending_row_loads
+            if row in self._row_cache
+            or row >= self._total_count
+            or result.first <= row <= result.last
+        }
+        self._pending_row_loads.difference_update(completed_pending_rows)
         self._collection_revision = max(self._collection_revision, result.collection_revision)
         self._pending_scan_refresh = False
         self._pending_scan_rels.clear()
@@ -598,6 +610,8 @@ class GalleryCollectionStore:
             self.data_changed.emit()
         elif self._window_range is not None:
             self.window_changed.emit(*self._window_range)
+        for row in loaded_rows:
+            self.row_loaded.emit(row)
         return True
 
     def cached_rows(self, first: int, last: int) -> list[tuple[int, AssetDTO]]:
@@ -640,7 +654,7 @@ class GalleryCollectionStore:
             if self._pending_source_matches_query(pending, self._current_query)
         )
         pending_insertions = tuple(
-            self._pending_insertions_for_query(self._current_query, self._row_cache.values())
+            self._pending_insertions_for_query(self._current_query, ())
         )
         self._window_request_handler(
             GalleryWindowRequest(
@@ -712,12 +726,10 @@ class GalleryCollectionStore:
         if not rows:
             if (
                 is_thumbnail_backfill
-                and self._current_query is not None
-                and self._active_root is not None
-                and self._scan_root_matches_active_root(Path(root))
+                and not self._pending_scan_rels
+                and not self._pending_scan_sort_keys
             ):
-                self._pending_scan_refresh = True
-                return True
+                self._pending_scan_refresh = False
             return False
         return self._record_scan_rows(Path(root), list(rows))
 
@@ -1535,5 +1547,6 @@ class GalleryCollectionStore:
         self._pending_scan_sort_keys.clear()
         self._thumbnail_backfill_windows.clear()
         self._thumbnail_backfill_pending = False
+        self._pending_row_loads.clear()
         self._collection_revision += 1
         self._request_generation += 1
