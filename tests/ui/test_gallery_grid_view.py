@@ -1,13 +1,14 @@
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QStandardItem, QStandardItemModel, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication
 
+from iPhoto.gui.ui.models.roles import Roles
+from iPhoto.gui.ui.widgets.asset_delegate import AssetGridDelegate
 from iPhoto.gui.ui.widgets.asset_grid import AssetGrid
 from iPhoto.gui.ui.widgets.gallery_grid_view import GalleryGridView
-from iPhoto.gui.ui.widgets.asset_delegate import AssetGridDelegate
-from iPhoto.gui.ui.models.roles import Roles
+
 
 # Attempt to patch load_icon in asset_delegate if it exists
 def patch_delegate_icons(monkeypatch):
@@ -37,11 +38,15 @@ def test_gallery_responsive_layout(qapp_instance, monkeypatch):
 
     # Setup view
     view = GalleryGridView()
+    assert view.viewport().autoFillBackground()
+    assert not view.viewport().testAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+    assert not view.viewport().testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert not view.viewport().testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
     delegate = AssetGridDelegate(view)
     view.setItemDelegate(delegate)
 
     model = QStandardItemModel()
-    for i in range(12):
+    for _ in range(12):
         item = QStandardItem()
         item.setData(False, Roles.IS_SPACER)
         pix = QPixmap(100, 100)
@@ -150,6 +155,26 @@ def test_gallery_responsive_layout(qapp_instance, monkeypatch):
     assert cols == 2
     assert view.gridSize().width() == cell
     assert view.iconSize().width() == item
+
+
+def test_gallery_viewport_renders_an_opaque_background(qapp_instance):
+    view = GalleryGridView()
+    view.resize(640, 480)
+    view.show()
+    qapp_instance.processEvents()
+
+    viewport = view.viewport()
+    image = QImage(viewport.size(), QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    try:
+        viewport.render(painter, QPoint())
+    finally:
+        painter.end()
+
+    center = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert center.alpha() == 255
+    view.close()
 
 
 def test_delegate_assigned_after_show_uses_responsive_tile_size(qapp_instance, monkeypatch):

@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
-from PySide6.QtCore import QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
-    QFont,
-    QFontMetrics,
-    QIcon,
     QImage,
     QPainter,
     QPainterPath,
@@ -17,8 +12,9 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
 )
-from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QStyledItemDelegate
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from ...viewmodels.gallery_tile import GalleryTileSnapshot
 from ..badge_renderer import BadgeRenderer
 from ..geometry_utils import calculate_center_crop
 from ..models.roles import Roles
@@ -66,18 +62,27 @@ class AssetGridDelegate(QStyledItemDelegate):
         if bool(index.data(Roles.IS_SPACER)):
             return
 
+        snapshot = index.data(Roles.TILE_SNAPSHOT)
+        tile_snapshot = snapshot if isinstance(snapshot, GalleryTileSnapshot) else None
         painter.save()
         cell_rect = option.rect
-        is_current = self._filmstrip_mode and bool(index.data(Roles.IS_CURRENT))
+        is_current = self._filmstrip_mode and (
+            tile_snapshot.is_current
+            if tile_snapshot is not None
+            else bool(index.data(Roles.IS_CURRENT))
+        )
         thumb_rect = cell_rect
         base_color = option.palette.color(QPalette.Base)
         corner_radius = 8.0 if self._filmstrip_mode else 0.0
 
-        pixmap = index.data(Qt.DecorationRole)
-        micro_thumb = None
-        if not (isinstance(pixmap, QPixmap) and not pixmap.isNull()):
-            # Fallback to micro thumbnail
-            micro_thumb = index.data(Roles.MICRO_THUMBNAIL)
+        if tile_snapshot is not None:
+            pixmap = tile_snapshot.full_pixmap
+            micro_thumb = tile_snapshot.micro_image
+        else:
+            pixmap = index.data(Qt.DecorationRole)
+            micro_thumb = None
+            if not (isinstance(pixmap, QPixmap) and not pixmap.isNull()):
+                micro_thumb = index.data(Roles.MICRO_THUMBNAIL)
 
         clip_path: QPainterPath | None = None
         if self._filmstrip_mode and corner_radius > 0.0:
@@ -91,7 +96,8 @@ class AssetGridDelegate(QStyledItemDelegate):
             painter.fillRect(thumb_rect, base_color)
 
         if isinstance(pixmap, QPixmap) and not pixmap.isNull():
-            painter.setRenderHint(QPainter.Antialiasing, True)
+            if self._filmstrip_mode:
+                painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
             source_rect = calculate_center_crop(pixmap.size(), thumb_rect.size())
@@ -101,7 +107,8 @@ class AssetGridDelegate(QStyledItemDelegate):
                 painter.fillRect(thumb_rect, QColor("#1b1b1b"))
         elif isinstance(micro_thumb, QImage) and not micro_thumb.isNull():
             # Draw micro thumbnail scaled
-            painter.setRenderHint(QPainter.Antialiasing, True)
+            if self._filmstrip_mode:
+                painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
             # Simple scaling to fill the thumb_rect, using center crop logic
@@ -139,18 +146,25 @@ class AssetGridDelegate(QStyledItemDelegate):
             radius = max(0.0, corner_radius - 1)
             painter.drawRoundedRect(QRectF(adjusted), radius, radius)
 
-        if index.data(Roles.IS_LIVE):
+        record = tile_snapshot.record if tile_snapshot is not None else None
+        is_live = record.is_live if record is not None else bool(index.data(Roles.IS_LIVE))
+        is_pano = record.is_pano if record is not None else bool(index.data(Roles.IS_PANO))
+        is_video = record.is_video if record is not None else bool(index.data(Roles.IS_VIDEO))
+        is_favorite = (
+            record.is_favorite if record is not None else bool(index.data(Roles.FEATURED))
+        )
+        if is_live:
             self._badge_renderer.draw_live_badge(painter, thumb_rect)
 
-        if index.data(Roles.IS_PANO):
+        if is_pano:
             self._badge_renderer.draw_pano_badge(painter, thumb_rect)
 
-        if index.data(Roles.IS_VIDEO):
-            duration = self._extract_duration(index)
+        if is_video:
+            duration = record.duration if record is not None else self._extract_duration(index)
             if duration > 0:
                 self._badge_renderer.draw_duration_badge(painter, thumb_rect, duration, option.font)
 
-        if bool(index.data(Roles.FEATURED)):
+        if is_favorite:
             self._badge_renderer.draw_favorite_badge(painter, thumb_rect)
 
         if (

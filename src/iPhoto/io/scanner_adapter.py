@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Iterator, Dict, Any, List, Optional, Callable, Iterable
+from io import BytesIO
 import os
 import queue
 import threading
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 import logging
 import mimetypes
 import time
+from PIL import Image
 
 from ..application.interfaces import IMetadataProvider, IThumbnailGenerator
 from ..domain.models.query import ThumbnailReadyResult, ThumbnailState
@@ -47,12 +49,12 @@ def ensure_scan_thumbnail(
     thumbnail_cache_dir: Path,
     size: tuple[int, int] = DEFAULT_THUMBNAIL_SIZE,
     refresh_cache: bool = False,
+    prefer_cached_micro: bool = False,
 ) -> ThumbnailReadyResult:
     """Generate the scan-time thumbnail payload and 512px disk cache entry."""
 
     with media_access.read(path):
         try:
-            micro_payload = _generate_micro_payload(path)
             cache_key = _write_scan_thumbnail_cache(
                 path,
                 thumbnail_cache_dir,
@@ -63,6 +65,21 @@ def ensure_scan_thumbnail(
                 return ThumbnailReadyResult(
                     state=ThumbnailState.FAILED,
                     thumb_error="thumbnail_unavailable",
+                )
+            cache_file = thumbnail_cache_file_for_key(thumbnail_cache_dir, cache_key)
+            micro_payload = (
+                _generate_micro_from_full_cache(cache_file)
+                if prefer_cached_micro
+                else _generate_micro_payload(path)
+            )
+            if micro_payload is None and not prefer_cached_micro:
+                micro_payload = _generate_micro_from_full_cache(cache_file)
+            if micro_payload is None and prefer_cached_micro:
+                micro_payload = _generate_micro_payload(path)
+            if micro_payload is None:
+                return ThumbnailReadyResult(
+                    state=ThumbnailState.FAILED,
+                    thumb_error="micro_thumbnail_unavailable",
                 )
             return ThumbnailReadyResult(
                 state=ThumbnailState.READY,
@@ -94,6 +111,22 @@ def _generate_micro_payload(path: Path) -> bytes | None:
     if isinstance(micro_thumbnail, (bytes, bytearray, memoryview)):
         return bytes(micro_thumbnail)
     return str(micro_thumbnail).encode("utf-8")
+
+
+def _generate_micro_from_full_cache(cache_file: Path) -> bytes | None:
+    """Derive the mandatory micro layer from an already-rendered 512 thumbnail."""
+
+    try:
+        with Image.open(cache_file) as image:
+            image.thumbnail((16, 16), Image.Resampling.BICUBIC)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            payload = BytesIO()
+            image.save(payload, format="JPEG", quality=75)
+            return payload.getvalue()
+    except (OSError, ValueError):
+        LOGGER.debug("Failed to derive micro thumbnail from %s", cache_file, exc_info=True)
+        return None
 
 
 def _write_scan_thumbnail_cache(

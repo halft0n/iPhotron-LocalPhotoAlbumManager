@@ -13,6 +13,7 @@ from iPhoto.domain.models import Asset, MediaType
 from iPhoto.domain.models.query import AssetQuery, WindowResult
 from iPhoto.gui.viewmodels.asset_dto_converter import scan_row_to_dto
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
+from iPhoto.gui.viewmodels.gallery_window_loader import GalleryWindowResult
 from iPhoto.library.runtime_controller import GeotaggedAsset
 
 
@@ -184,6 +185,7 @@ def test_scan_row_to_dto_decodes_micro_thumbnail_bytes() -> None:
     assert dto is not None
     assert isinstance(dto.micro_thumbnail, QImage)
     assert not dto.micro_thumbnail.isNull()
+    assert "micro_thumbnail" not in dto.metadata
 
 
 def test_scan_row_to_dto_ignores_invalid_micro_thumbnail_bytes() -> None:
@@ -485,6 +487,72 @@ def test_asset_at_does_not_fetch_row_outside_initial_window_synchronously() -> N
     assert dto is None
     assert 360 not in store._row_cache
     assert service.read_calls == [(0, 320)]
+
+
+def test_async_store_initial_load_never_queries_on_owner_thread() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+
+    store.load_selection(Path("."), query=AssetQuery())
+
+    assert service.read_calls == []
+    assert len(requests) == 1
+    assert store.count() == 0
+
+
+def test_async_store_applies_only_current_generation_and_revision() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    request = requests[-1]
+    dto = scan_row_to_dto(
+        Path("."),
+        "photo.jpg",
+        {"id": "photo", "rel": "photo.jpg", "media_type": 0},
+    )
+    assert dto is not None
+
+    stale = GalleryWindowResult(
+        generation=request.generation - 1,
+        first=0,
+        last=0,
+        rows={0: dto},
+        total_count=1,
+        collection_revision=request.collection_revision,
+        requested_revision=request.collection_revision,
+    )
+    assert store.apply_window_result(stale) is False
+    assert store.count() == 0
+
+    current = GalleryWindowResult(
+        generation=request.generation,
+        first=0,
+        last=0,
+        rows={0: dto},
+        total_count=1,
+        collection_revision=request.collection_revision,
+        requested_revision=request.collection_revision,
+    )
+    assert store.apply_window_result(current) is True
+    assert store.asset_at(0) is dto
+
+
+def test_async_ensure_row_loaded_only_schedules_window() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 1_000
+    requests.clear()
+
+    assert store.ensure_row_loaded(700) is False
+    assert service.read_calls == []
+    assert len(requests) == 1
 
 
 def test_row_for_path_uses_query_lookup_without_scanning_batches() -> None:

@@ -83,7 +83,7 @@ def test_qimage_from_bytes_falls_back_to_qt_when_pillow_decode_fails(monkeypatch
     )
     monkeypatch.setattr(image_loader, "QImage", FakeQImage)
 
-    qimg = image_loader.qimage_from_bytes(b"qt-supported-image")
+    qimg = image_loader.qimage_from_bytes(b"\xff\xd8\xffqt-supported-image")
 
     assert isinstance(qimg, FakeQImage)
     assert qimg.loaded

@@ -87,7 +87,7 @@ def test_l1_l2_hit_does_not_enqueue_generation(tmp_path: Path) -> None:
     queue_generation.assert_not_called()
 
 
-def test_l2_hit_for_scan_written_512_thumbnail_does_not_enqueue_generation(
+def test_l2_hit_is_not_read_synchronously_from_get_thumbnail(
     tmp_path: Path,
     qapp,
 ) -> None:
@@ -102,6 +102,77 @@ def test_l2_hit_for_scan_written_512_thumbnail_does_not_enqueue_generation(
     with patch.object(service, "_queue_generation") as queue_generation:
         pixmap = service.get_thumbnail(path, size)
 
-    assert pixmap is not None
-    assert not pixmap.isNull()
-    queue_generation.assert_not_called()
+    assert pixmap is None
+    queue_generation.assert_called_once()
+
+
+def test_worker_loads_l2_hit_without_rendering_source(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "photo.jpg"
+    size = QSize(512, 512)
+    disk_file = thumbnail_cache_file(tmp_path / "thumbs", path, (512, 512))
+    disk_file.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (512, 512), "red").save(disk_file, format="JPEG")
+
+    with patch.object(service, "_render_thumbnail") as render:
+        image = service._load_or_render_thumbnail(path, size)
+
+    assert image is not None
+    assert not image.isNull()
+    render.assert_not_called()
+
+
+def test_peek_full_thumbnail_never_touches_disk(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+
+    with patch.object(Path, "exists", side_effect=AssertionError("disk access")):
+        assert service.peek_full_thumbnail(tmp_path / "photo.jpg", QSize(512, 512)) is None
+
+
+def test_reentered_pending_thumbnail_promotes_generation(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    service._max_active_jobs = 0
+    path = tmp_path / "photo.jpg"
+    size = QSize(512, 512)
+
+    service.request_many([(path, size, "low")], generation=1)
+    service.request_many([(path, size, "visible")], generation=9)
+
+    key = service._cache_key(path, size)
+    assert service._pending_generations[key] == 9
+    assert service._queued_tasks[key][2:] == ("visible", 9)
+
+
+def test_stale_worker_result_is_discarded_before_pixmap_conversion(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "photo.jpg"
+    size = QSize(512, 512)
+    key = service._cache_key(path, size)
+    service._current_generation = 9
+    service._pending_tasks.add(key)
+    service._pending_generations[key] = 1
+    service._active_tasks = 1
+    image = QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied)
+
+    with patch.object(service, "_add_to_memory") as add_to_memory:
+        service._handle_generation_result(path, size, image, generation=1)
+
+    add_to_memory.assert_not_called()
+    assert key not in service._pending_tasks
+
+
+def test_promoted_active_failure_retries_current_generation(tmp_path: Path) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    service._max_active_jobs = 0
+    path = tmp_path / "photo.jpg"
+    size = QSize(512, 512)
+    key = service._cache_key(path, size)
+    service._current_generation = 9
+    service._pending_tasks.add(key)
+    service._pending_generations[key] = 9
+    service._active_tasks = 1
+
+    service._handle_generation_failure(path, size, "old failure", generation=1)
+
+    assert service._queued_tasks[key][2:] == ("visible", 9)
+    assert key not in service._failure_until

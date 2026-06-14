@@ -31,6 +31,7 @@ class Roles(IntEnum):
     COMPOSITE = Qt.UserRole + 18
     DT_SORT = Qt.UserRole + 19
     MICRO_THUMBNAIL = Qt.UserRole + 20
+    TILE_SNAPSHOT = Qt.UserRole + 21
 
 
 def role_names(base: Dict[int, bytes] | None = None) -> Dict[int, bytes]:
@@ -59,6 +60,7 @@ def role_names(base: Dict[int, bytes] | None = None) -> Dict[int, bytes]:
             Roles.COMPOSITE: b"composite",
             Roles.DT_SORT: b"dtSort",
             Roles.MICRO_THUMBNAIL: b"microThumbnail",
+            Roles.TILE_SNAPSHOT: b"tileSnapshot",
         }
     )
     return mapping

@@ -12,6 +12,8 @@ from iPhoto.application.dtos import AssetDTO
 from iPhoto.gui.ui.models.roles import Roles
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
 from iPhoto.gui.viewmodels.gallery_list_model_adapter import GalleryListModelAdapter
+from iPhoto.gui.viewmodels.gallery_tile import GalleryTileSnapshot
+from iPhoto.gui.ui.widgets.gallery_scroll_controller import GalleryViewportState
 from iPhoto.infrastructure.services.thumbnail_cache_service import ThumbnailCacheService
 
 
@@ -55,7 +57,9 @@ def mock_store():
 
 @pytest.fixture
 def mock_thumb_service():
-    return MagicMock(spec=ThumbnailCacheService)
+    service = MagicMock(spec=ThumbnailCacheService)
+    service.peek_full_thumbnail.return_value = None
+    return service
 
 
 @pytest.fixture
@@ -126,13 +130,13 @@ def test_prioritize_rows_delegates_to_store(adapter, mock_store):
     mock_store.prioritize_rows.assert_called_once_with(10, 25)
 
 
-def test_prioritize_rows_coalesces_fast_scroll_requests(adapter, mock_store):
+def test_prioritize_rows_keeps_only_latest_fast_scroll_request(adapter, mock_store):
     adapter.prioritize_rows(10, 25)
     adapter.prioritize_rows(20, 60)
     adapter.prioritize_rows(5, 15)
     adapter._flush_pending_prioritize_rows()
 
-    mock_store.prioritize_rows.assert_called_once_with(5, 60)
+    mock_store.prioritize_rows.assert_called_once_with(5, 15)
 
 
 def test_scan_batches_are_coalesced_before_store_flush(adapter, mock_store):
@@ -215,16 +219,16 @@ def test_decoration_role_uses_full_size_thumbnail_even_with_micro_fallback(
     full_size = object()
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
-    mock_thumb_service.get_thumbnail.return_value = full_size
+    mock_thumb_service.peek_full_thumbnail.return_value = full_size
 
     result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
 
     assert result is full_size
-    mock_thumb_service.get_thumbnail.assert_called_once_with(
+    mock_thumb_service.peek_full_thumbnail.assert_called_once_with(
         Path("photo.jpg"),
         adapter._thumb_size,
-        priority="visible",
     )
+    mock_thumb_service.get_thumbnail.assert_not_called()
 
 
 def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(
@@ -235,16 +239,16 @@ def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(
     micro = QImage(2, 2, QImage.Format.Format_RGB32)
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
-    mock_thumb_service.get_thumbnail.return_value = None
+    mock_thumb_service.peek_full_thumbnail.return_value = None
 
     index = adapter.index(0, 0)
 
     assert adapter.data(index, Qt.DecorationRole) is None
     assert adapter.data(index, Roles.MICRO_THUMBNAIL) is micro
-    mock_thumb_service.get_thumbnail.assert_called_once()
+    mock_thumb_service.get_thumbnail.assert_not_called()
 
 
-def test_decoration_role_schedules_full_size_even_when_micro_thumbnail_is_not_drawable(
+def test_decoration_role_never_schedules_full_size_from_paint(
     adapter,
     mock_store,
     mock_thumb_service,
@@ -252,12 +256,75 @@ def test_decoration_role_schedules_full_size_even_when_micro_thumbnail_is_not_dr
     fallback = object()
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=b"jpeg-bytes")
-    mock_thumb_service.get_thumbnail.return_value = fallback
+    mock_thumb_service.peek_full_thumbnail.return_value = fallback
 
     result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
 
     assert result is fallback
-    mock_thumb_service.get_thumbnail.assert_called_once()
+    mock_thumb_service.get_thumbnail.assert_not_called()
+
+
+def test_tile_snapshot_is_micro_first_and_memory_only(adapter, mock_store, mock_thumb_service):
+    micro = QImage(2, 2, QImage.Format.Format_RGB32)
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
+    mock_thumb_service.peek_full_thumbnail.return_value = None
+
+    snapshot = adapter.data(adapter.index(0, 0), Roles.TILE_SNAPSHOT)
+
+    assert isinstance(snapshot, GalleryTileSnapshot)
+    assert snapshot.loading_state == "micro"
+    assert snapshot.micro_image is micro
+    assert snapshot.full_pixmap is None
+    mock_store.ensure_row_loaded.assert_not_called()
+    mock_thumb_service.request_many.assert_not_called()
+
+
+def test_tile_snapshot_miss_does_not_synchronously_load(adapter, mock_store):
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = None
+
+    snapshot = adapter.data(adapter.index(0, 0), Roles.TILE_SNAPSHOT)
+
+    assert isinstance(snapshot, GalleryTileSnapshot)
+    assert snapshot.loading_state == "placeholder"
+    mock_store.ensure_row_loaded.assert_not_called()
+
+
+def test_active_viewport_prioritizes_micro_and_cancels_stale_full(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    state = GalleryViewportState(7, 100, 119, 1, 5000.0, True)
+
+    adapter.update_viewport(state)
+    adapter._flush_pending_prioritize_rows()
+
+    mock_store.prioritize_rows.assert_called_once_with(60, 359)
+    mock_thumb_service.cancel_stale.assert_called_once_with(7)
+    mock_thumb_service.request_many.assert_not_called()
+
+
+def test_idle_viewport_requests_visible_and_adjacent_full(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    dto = _make_dto(abs_path=Path("/library/photo.jpg"))
+    mock_store.cached_rows.side_effect = [
+        [(100, dto)],
+        [(100, dto)],
+    ]
+    state = GalleryViewportState(8, 100, 119, 1, 0.0, False)
+
+    adapter.update_viewport(state)
+
+    mock_thumb_service.pin_visible.assert_called_once_with(
+        [Path("/library/photo.jpg")],
+        adapter._thumb_size,
+    )
+    mock_thumb_service.request_many.assert_called_once()
 
 
 def test_rebind_asset_query_service_updates_store(adapter, mock_store):
