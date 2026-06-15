@@ -667,6 +667,7 @@ class GalleryListModelAdapter(QAbstractListModel):
             prefetch_paths=prefetch_paths,
             size=self._thumb_size,
             generation=demand.generation,
+            phase=demand.phase,
         )
 
     def _on_row_changed(self, row: int) -> None:

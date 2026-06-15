@@ -316,6 +316,7 @@ def test_fast_viewport_warms_micro_and_still_requests_visible_full(
         prefetch_paths=[],
         size=adapter._thumb_size,
         generation=7,
+        phase="fast",
     )
     assert demand.phase == "fast"
     assert demand.full_prefetch_range == demand.visible_range
@@ -384,6 +385,7 @@ def test_settled_viewport_requests_visible_and_ordered_prefetch_full(
         ],
         size=adapter._thumb_size,
         generation=8,
+        phase="settled",
     )
     assert demand.phase == "settled"
     assert demand.full_prefetch_first < demand.visible_first
