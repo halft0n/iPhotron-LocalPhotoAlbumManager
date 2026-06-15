@@ -9,9 +9,15 @@ from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QImage
 
 from iPhoto.application.dtos import AssetDTO
+from iPhoto.gui.gallery_demand import build_viewport_demand
 from iPhoto.gui.ui.models.roles import Roles
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
 from iPhoto.gui.viewmodels.gallery_list_model_adapter import GalleryListModelAdapter
+from iPhoto.gui.viewmodels.gallery_thumbnail_hint_loader import (
+    GalleryThumbnailCandidate,
+    GalleryThumbnailHintResult,
+)
+from iPhoto.gui.viewmodels.gallery_tile import GalleryTileSnapshot
 from iPhoto.infrastructure.services.thumbnail_cache_service import ThumbnailCacheService
 
 
@@ -55,7 +61,9 @@ def mock_store():
 
 @pytest.fixture
 def mock_thumb_service():
-    return MagicMock(spec=ThumbnailCacheService)
+    service = MagicMock(spec=ThumbnailCacheService)
+    service.peek_full_thumbnail.return_value = None
+    return service
 
 
 @pytest.fixture
@@ -126,13 +134,13 @@ def test_prioritize_rows_delegates_to_store(adapter, mock_store):
     mock_store.prioritize_rows.assert_called_once_with(10, 25)
 
 
-def test_prioritize_rows_coalesces_fast_scroll_requests(adapter, mock_store):
+def test_prioritize_rows_keeps_only_latest_fast_scroll_request(adapter, mock_store):
     adapter.prioritize_rows(10, 25)
     adapter.prioritize_rows(20, 60)
     adapter.prioritize_rows(5, 15)
     adapter._flush_pending_prioritize_rows()
 
-    mock_store.prioritize_rows.assert_called_once_with(5, 60)
+    mock_store.prioritize_rows.assert_called_once_with(5, 15)
 
 
 def test_scan_batches_are_coalesced_before_store_flush(adapter, mock_store):
@@ -215,16 +223,16 @@ def test_decoration_role_uses_full_size_thumbnail_even_with_micro_fallback(
     full_size = object()
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
-    mock_thumb_service.get_thumbnail.return_value = full_size
+    mock_thumb_service.peek_full_thumbnail.return_value = full_size
 
     result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
 
     assert result is full_size
-    mock_thumb_service.get_thumbnail.assert_called_once_with(
+    mock_thumb_service.peek_full_thumbnail.assert_called_once_with(
         Path("photo.jpg"),
         adapter._thumb_size,
-        priority="visible",
     )
+    mock_thumb_service.get_thumbnail.assert_not_called()
 
 
 def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(
@@ -235,16 +243,16 @@ def test_decoration_role_miss_leaves_micro_thumbnail_for_delegate_fallback(
     micro = QImage(2, 2, QImage.Format.Format_RGB32)
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
-    mock_thumb_service.get_thumbnail.return_value = None
+    mock_thumb_service.peek_full_thumbnail.return_value = None
 
     index = adapter.index(0, 0)
 
     assert adapter.data(index, Qt.DecorationRole) is None
     assert adapter.data(index, Roles.MICRO_THUMBNAIL) is micro
-    mock_thumb_service.get_thumbnail.assert_called_once()
+    mock_thumb_service.get_thumbnail.assert_not_called()
 
 
-def test_decoration_role_schedules_full_size_even_when_micro_thumbnail_is_not_drawable(
+def test_decoration_role_never_schedules_full_size_from_paint(
     adapter,
     mock_store,
     mock_thumb_service,
@@ -252,12 +260,144 @@ def test_decoration_role_schedules_full_size_even_when_micro_thumbnail_is_not_dr
     fallback = object()
     mock_store.count.return_value = 1
     mock_store.asset_at.return_value = _make_dto(micro_thumbnail=b"jpeg-bytes")
-    mock_thumb_service.get_thumbnail.return_value = fallback
+    mock_thumb_service.peek_full_thumbnail.return_value = fallback
 
     result = adapter.data(adapter.index(0, 0), Qt.DecorationRole)
 
     assert result is fallback
-    mock_thumb_service.get_thumbnail.assert_called_once()
+    mock_thumb_service.get_thumbnail.assert_not_called()
+
+
+def test_tile_snapshot_is_micro_first_and_memory_only(adapter, mock_store, mock_thumb_service):
+    micro = QImage(2, 2, QImage.Format.Format_RGB32)
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = _make_dto(micro_thumbnail=micro)
+    mock_thumb_service.peek_full_thumbnail.return_value = None
+
+    snapshot = adapter.data(adapter.index(0, 0), Roles.TILE_SNAPSHOT)
+
+    assert isinstance(snapshot, GalleryTileSnapshot)
+    assert snapshot.loading_state == "micro"
+    assert snapshot.micro_image is micro
+    assert snapshot.full_pixmap is None
+    mock_store.ensure_row_loaded.assert_not_called()
+    mock_thumb_service.request_many.assert_not_called()
+
+
+def test_tile_snapshot_miss_does_not_synchronously_load(adapter, mock_store):
+    mock_store.count.return_value = 1
+    mock_store.asset_at.return_value = None
+
+    snapshot = adapter.data(adapter.index(0, 0), Roles.TILE_SNAPSHOT)
+
+    assert isinstance(snapshot, GalleryTileSnapshot)
+    assert snapshot.loading_state == "placeholder"
+    mock_store.ensure_row_loaded.assert_not_called()
+
+
+def test_fast_viewport_warms_micro_and_still_requests_visible_full(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    dto = _make_dto(abs_path=Path("/library/photo.jpg"))
+    mock_store.cached_rows.side_effect = [[(100, dto)], [(100, dto)]]
+    demand = build_viewport_demand(
+        generation=7,
+        row_count=10_000,
+        visible_first=100,
+        visible_last=119,
+        direction=1,
+        screens_per_second=9.0,
+        actively_scrolling=True,
+    )
+
+    adapter.update_viewport(demand)
+
+    mock_store.reconcile_viewport_demand.assert_called_once_with(demand)
+    mock_thumb_service.reconcile_demand.assert_called_once_with(
+        visible_paths=[Path("/library/photo.jpg")],
+        prefetch_paths=[],
+        size=adapter._thumb_size,
+        generation=7,
+        phase="fast",
+        intent="continuous_burst",
+        prefetch_candidates=(),
+    )
+    assert demand.phase == "fast"
+    assert demand.full_prefetch_range == demand.visible_range
+    assert demand.warm_last - demand.warm_first + 1 == 2000
+
+
+@pytest.mark.parametrize(("speed", "phase"), [(1.0, "slow"), (4.0, "medium")])
+def test_scrolling_phase_immediately_requests_visible_full(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+    speed,
+    phase,
+):
+    dto = _make_dto(abs_path=Path("/library/photo.jpg"))
+    mock_store.cached_rows.side_effect = [[(100, dto)], [(100, dto)]]
+    demand = build_viewport_demand(
+        generation=7,
+        row_count=10_000,
+        visible_first=100,
+        visible_last=119,
+        direction=1,
+        screens_per_second=speed,
+        actively_scrolling=True,
+    )
+
+    adapter.update_viewport(demand)
+
+    assert demand.phase == phase
+    mock_thumb_service.reconcile_demand.assert_called_once()
+    assert mock_thumb_service.reconcile_demand.call_args.kwargs["visible_paths"] == [
+        Path("/library/photo.jpg")
+    ]
+
+
+def test_settled_viewport_requests_visible_and_ordered_prefetch_full(
+    adapter,
+    mock_store,
+    mock_thumb_service,
+):
+    visible = _make_dto(abs_path=Path("/library/visible.jpg"))
+    before = _make_dto(abs_path=Path("/library/before.jpg"))
+    after = _make_dto(abs_path=Path("/library/after.jpg"))
+    mock_store.cached_rows.side_effect = [
+        [(100, visible)],
+        [(99, before), (100, visible), (120, after)],
+    ]
+    demand = build_viewport_demand(
+        generation=8,
+        row_count=10_000,
+        visible_first=100,
+        visible_last=119,
+        direction=1,
+        screens_per_second=0.0,
+        actively_scrolling=False,
+    )
+
+    adapter.update_viewport(demand)
+
+    mock_store.reconcile_viewport_demand.assert_called_once_with(demand)
+    mock_thumb_service.reconcile_demand.assert_called_once_with(
+        visible_paths=[Path("/library/visible.jpg")],
+        prefetch_paths=[
+            Path("/library/before.jpg"),
+            Path("/library/after.jpg"),
+        ],
+        size=adapter._thumb_size,
+        generation=8,
+        phase="settled",
+        intent="idle",
+        prefetch_candidates=(),
+    )
+    assert demand.phase == "settled"
+    assert demand.full_prefetch_first < demand.visible_first
+    assert demand.full_prefetch_last > demand.visible_last
 
 
 def test_rebind_asset_query_service_updates_store(adapter, mock_store):
@@ -267,6 +407,71 @@ def test_rebind_asset_query_service_updates_store(adapter, mock_store):
     adapter.rebind_asset_query_service(query_service, root)
 
     mock_store.rebind_asset_query_service.assert_called_once_with(query_service, root)
+
+
+def test_stale_thumbnail_hint_result_is_discarded(adapter, mock_thumb_service):
+    adapter._viewport_demand = build_viewport_demand(
+        generation=9,
+        row_count=100,
+        visible_first=10,
+        visible_last=19,
+        direction=1,
+        screens_per_second=0.0,
+        actively_scrolling=False,
+        intent="directional_dwell",
+        prefetch_direction=1,
+    )
+
+    adapter._on_thumbnail_hint_result(
+        GalleryThumbnailHintResult(
+            request_id=adapter._thumbnail_hint_request_id,
+            generation=8,
+            candidates=(
+                GalleryThumbnailCandidate(
+                    Path("/library/stale.jpg"),
+                    "stale-key",
+                    0,
+                    "predictive",
+                ),
+            ),
+            elapsed_ms=1.0,
+        )
+    )
+
+    mock_thumb_service.reconcile_demand.assert_not_called()
+
+
+def test_old_thumbnail_hint_request_id_is_discarded(adapter, mock_thumb_service):
+    adapter._viewport_demand = build_viewport_demand(
+        generation=9,
+        row_count=100,
+        visible_first=10,
+        visible_last=19,
+        direction=1,
+        screens_per_second=0.0,
+        actively_scrolling=False,
+        intent="directional_dwell",
+        prefetch_direction=1,
+    )
+    adapter._thumbnail_hint_request_id = 2
+
+    adapter._on_thumbnail_hint_result(
+        GalleryThumbnailHintResult(
+            request_id=1,
+            generation=9,
+            candidates=(
+                GalleryThumbnailCandidate(
+                    Path("/old-library/stale.jpg"),
+                    "stale-key",
+                    0,
+                    "predictive",
+                ),
+            ),
+            elapsed_ms=1.0,
+        )
+    )
+
+    mock_thumb_service.reconcile_demand.assert_not_called()
 
 
 def test_invalidate_thumbnail_clears_duration_cache_and_emits_size_role(adapter, mock_store):

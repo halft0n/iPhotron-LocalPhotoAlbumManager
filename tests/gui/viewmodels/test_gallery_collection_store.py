@@ -11,8 +11,16 @@ from PIL import Image
 from iPhoto.config import RECENTLY_DELETED_DIR_NAME
 from iPhoto.domain.models import Asset, MediaType
 from iPhoto.domain.models.query import AssetQuery, WindowResult
+from iPhoto.gui.gallery_demand import MICRO_QUERY_CHUNK, MICRO_WARM_LIMIT, build_viewport_demand
 from iPhoto.gui.viewmodels.asset_dto_converter import scan_row_to_dto
 from iPhoto.gui.viewmodels.gallery_collection_store import GalleryCollectionStore
+from iPhoto.gui.viewmodels.gallery_window_loader import (
+    GalleryWindowLoader,
+    GalleryWindowRequest,
+    GalleryWindowResult,
+    _GalleryWindowSignals,
+    _GalleryWindowWorker,
+)
 from iPhoto.library.runtime_controller import GeotaggedAsset
 
 
@@ -184,6 +192,7 @@ def test_scan_row_to_dto_decodes_micro_thumbnail_bytes() -> None:
     assert dto is not None
     assert isinstance(dto.micro_thumbnail, QImage)
     assert not dto.micro_thumbnail.isNull()
+    assert "micro_thumbnail" not in dto.metadata
 
 
 def test_scan_row_to_dto_ignores_invalid_micro_thumbnail_bytes() -> None:
@@ -422,6 +431,7 @@ def test_thumbnail_backfill_completion_releases_requested_window(tmp_path: Path)
     store.load_selection(tmp_path, query=AssetQuery())
     store._thumbnail_backfill_windows = {(0, store.MIN_WINDOW_SIZE)}
     store._thumbnail_backfill_pending = True
+    store._pending_scan_refresh = True
     batch = SimpleNamespace(
         job_id=f"thumbnail-backfill:{tmp_path}:0:{store.MIN_WINDOW_SIZE}",
         root=tmp_path,
@@ -430,10 +440,10 @@ def test_thumbnail_backfill_completion_releases_requested_window(tmp_path: Path)
         rows=[],
     )
 
-    assert store.record_scan_batch(batch) is True
+    assert store.record_scan_batch(batch) is False
     assert store._thumbnail_backfill_windows == set()
     assert store._thumbnail_backfill_pending is False
-    assert store._pending_scan_refresh is True
+    assert store._pending_scan_refresh is False
 
 
 def test_prioritize_rows_replaces_old_window_with_new_window() -> None:
@@ -485,6 +495,533 @@ def test_asset_at_does_not_fetch_row_outside_initial_window_synchronously() -> N
     assert dto is None
     assert 360 not in store._row_cache
     assert service.read_calls == [(0, 320)]
+
+
+def test_async_store_initial_load_never_queries_on_owner_thread() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+
+    store.load_selection(Path("."), query=AssetQuery())
+
+    assert service.read_calls == []
+    assert len(requests) == 1
+    assert store.count() == 0
+
+
+def test_async_viewport_demand_schedules_visible_chunk_before_2000_item_warm_range() -> None:
+    service = _FakeQueryService([])
+    requests: list[GalleryWindowRequest] = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 10_000
+    requests.clear()
+    demand = build_viewport_demand(
+        generation=5,
+        row_count=10_000,
+        visible_first=5_000,
+        visible_last=5_039,
+        direction=1,
+        screens_per_second=12.0,
+        actively_scrolling=True,
+    )
+
+    store.reconcile_viewport_demand(demand)
+
+    assert requests
+    assert requests[0].priority == 0
+    assert requests[0].view_first <= demand.visible_first <= requests[0].view_first + requests[0].limit
+    assert all(request.limit <= MICRO_QUERY_CHUNK for request in requests)
+    assert sum(request.limit for request in requests) == MICRO_WARM_LIMIT
+    assert {request.priority for request in requests} >= {0, 2}
+
+
+def test_async_window_results_merge_into_sparse_cache() -> None:
+    service = _FakeQueryService([])
+    requests: list[GalleryWindowRequest] = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 10_000
+    requests.clear()
+    demand = build_viewport_demand(
+        generation=6,
+        row_count=10_000,
+        visible_first=5_000,
+        visible_last=5_019,
+        direction=1,
+        screens_per_second=12.0,
+        actively_scrolling=True,
+    )
+    store.reconcile_viewport_demand(demand)
+    visible_request = next(request for request in requests if request.priority == 0)
+    warm_request = next(request for request in requests if request.priority == 2)
+    visible_dto = scan_row_to_dto(
+        Path("."),
+        "visible.jpg",
+        {"id": "visible", "rel": "visible.jpg", "media_type": 0},
+    )
+    warm_dto = scan_row_to_dto(
+        Path("."),
+        "warm.jpg",
+        {"id": "warm", "rel": "warm.jpg", "media_type": 0},
+    )
+    assert visible_dto is not None and warm_dto is not None
+
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=visible_request.generation,
+            first=visible_request.view_first,
+            last=visible_request.view_first,
+            rows={visible_request.view_first: visible_dto},
+            total_count=10_000,
+            collection_revision=0,
+            demand_generation=demand.generation,
+            priority=0,
+        )
+    )
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=warm_request.generation,
+            first=warm_request.view_first,
+            last=warm_request.view_first,
+            rows={warm_request.view_first: warm_dto},
+            total_count=10_000,
+            collection_revision=0,
+            demand_generation=demand.generation,
+            priority=2,
+        )
+    )
+
+    assert store.asset_at(visible_request.view_first) is visible_dto
+    assert store.asset_at(warm_request.view_first) is warm_dto
+    assert len(store._row_cache) <= MICRO_WARM_LIMIT
+
+
+def test_async_window_results_from_same_revision_batch_all_merge() -> None:
+    service = _FakeQueryService([])
+    requests: list[GalleryWindowRequest] = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 10_000
+    requests.clear()
+    demand = build_viewport_demand(
+        generation=7,
+        row_count=10_000,
+        visible_first=5_000,
+        visible_last=5_019,
+        direction=1,
+        screens_per_second=12.0,
+        actively_scrolling=True,
+    )
+    store.reconcile_viewport_demand(demand)
+    first_request, second_request = requests[:2]
+    first_dto = scan_row_to_dto(
+        Path("."),
+        "first.jpg",
+        {"id": "first", "rel": "first.jpg", "media_type": 0},
+    )
+    second_dto = scan_row_to_dto(
+        Path("."),
+        "second.jpg",
+        {"id": "second", "rel": "second.jpg", "media_type": 0},
+    )
+    assert first_dto is not None and second_dto is not None
+
+    for request, dto in ((first_request, first_dto), (second_request, second_dto)):
+        assert store.apply_window_result(
+            GalleryWindowResult(
+                generation=request.generation,
+                first=request.view_first,
+                last=request.view_first,
+                rows={request.view_first: dto},
+                total_count=10_000,
+                collection_revision=42,
+                requested_revision=request.collection_revision,
+                demand_generation=demand.generation,
+            )
+        )
+
+    assert store.asset_at(first_request.view_first) is first_dto
+    assert store.asset_at(second_request.view_first) is second_dto
+
+
+def test_async_window_result_older_than_current_collection_revision_is_rejected() -> None:
+    service = _FakeQueryService([])
+    requests: list[GalleryWindowRequest] = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    request = requests[-1]
+    dto = scan_row_to_dto(
+        Path("."),
+        "stale.jpg",
+        {"id": "stale", "rel": "stale.jpg", "media_type": 0},
+    )
+    assert dto is not None
+    store._collection_revision = request.collection_revision + 1
+
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=request.generation,
+            first=0,
+            last=0,
+            rows={0: dto},
+            total_count=1,
+            collection_revision=request.collection_revision,
+            requested_revision=request.collection_revision,
+        )
+    ) is False
+    assert store.asset_at(0) is None
+
+
+def test_old_active_window_result_is_reused_only_inside_current_warm_range() -> None:
+    service = _FakeQueryService([])
+    requests: list[GalleryWindowRequest] = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    initial_request = requests[-1]
+    store._total_count = 10_000
+    old_demand = build_viewport_demand(
+        generation=8,
+        row_count=10_000,
+        visible_first=5_000,
+        visible_last=5_019,
+        direction=1,
+        screens_per_second=12.0,
+        actively_scrolling=True,
+    )
+    store.reconcile_viewport_demand(old_demand)
+    relevant_request = next(
+        request
+        for request in requests
+        if request.priority == 0 and request.demand_generation == old_demand.generation
+    )
+    current_demand = build_viewport_demand(
+        generation=9,
+        row_count=10_000,
+        visible_first=5_100,
+        visible_last=5_119,
+        direction=1,
+        screens_per_second=12.0,
+        actively_scrolling=True,
+    )
+    store.reconcile_viewport_demand(current_demand)
+    irrelevant = scan_row_to_dto(
+        Path("."),
+        "irrelevant.jpg",
+        {"id": "irrelevant", "rel": "irrelevant.jpg", "media_type": 0},
+    )
+    assert irrelevant is not None
+
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=initial_request.generation,
+            first=0,
+            last=0,
+            rows={0: irrelevant},
+            total_count=10_000,
+            collection_revision=0,
+            demand_generation=0,
+        )
+    ) is False
+    assert store.asset_at(0) is None
+
+    relevant = scan_row_to_dto(
+        Path("."),
+        "relevant.jpg",
+        {"id": "relevant", "rel": "relevant.jpg", "media_type": 0},
+    )
+    assert relevant is not None
+    assert current_demand.warm_first <= relevant_request.view_first <= current_demand.warm_last
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=relevant_request.generation,
+            first=relevant_request.view_first,
+            last=relevant_request.view_first,
+            rows={relevant_request.view_first: relevant},
+            total_count=10_000,
+            collection_revision=0,
+            demand_generation=old_demand.generation,
+        )
+    ) is True
+    assert store.asset_at(relevant_request.view_first) is relevant
+
+
+def test_window_loader_keeps_explicit_row_request_when_viewport_generation_changes(
+    qapp,
+) -> None:
+    del qapp
+    loader = GalleryWindowLoader()
+    loader._active_generation = 999
+    dropped: list[int] = []
+    loader.requestsDropped.connect(lambda generations: dropped.extend(generations))
+
+    def request(
+        generation: int,
+        *,
+        demand_generation: int,
+        retain_when_stale: bool = False,
+    ) -> GalleryWindowRequest:
+        return GalleryWindowRequest(
+            generation=generation,
+            root=Path("."),
+            query=AssetQuery(),
+            query_service=object(),
+            view_first=generation * 10,
+            raw_first=generation * 10,
+            limit=10,
+            demand_generation=demand_generation,
+            retain_when_stale=retain_when_stale,
+        )
+
+    loader.request(request(1, demand_generation=1))
+    loader.request(request(2, demand_generation=0, retain_when_stale=True))
+    loader.request(request(3, demand_generation=2))
+
+    assert dropped == [1]
+    assert [item.generation for item in loader._queued_requests] == [2, 3]
+    loader.shutdown()
+
+
+def test_window_loader_drops_duplicate_of_active_query_window(qapp) -> None:
+    del qapp
+    loader = GalleryWindowLoader()
+    active = GalleryWindowRequest(
+        generation=1,
+        root=Path("."),
+        query=AssetQuery(),
+        query_service=object(),
+        view_first=100,
+        raw_first=100,
+        limit=256,
+        demand_generation=1,
+        priority=2,
+    )
+    duplicate = GalleryWindowRequest(
+        generation=2,
+        root=active.root,
+        query=active.query,
+        query_service=active.query_service,
+        view_first=active.view_first,
+        raw_first=active.raw_first,
+        limit=active.limit,
+        collection_revision=active.collection_revision,
+        demand_generation=2,
+        priority=0,
+    )
+    loader._active_generation = active.generation
+    loader._active_request = active
+    dropped: list[int] = []
+    loader.requestsDropped.connect(lambda generations: dropped.extend(generations))
+
+    loader.request(duplicate)
+
+    assert dropped == [duplicate.generation]
+    assert loader._queued_requests == []
+    loader.shutdown()
+
+
+def test_async_store_applies_only_current_generation_and_revision() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    request = requests[-1]
+    dto = scan_row_to_dto(
+        Path("."),
+        "photo.jpg",
+        {"id": "photo", "rel": "photo.jpg", "media_type": 0},
+    )
+    assert dto is not None
+
+    stale = GalleryWindowResult(
+        generation=request.generation - 1,
+        first=0,
+        last=0,
+        rows={0: dto},
+        total_count=1,
+        collection_revision=request.collection_revision,
+        requested_revision=request.collection_revision,
+    )
+    assert store.apply_window_result(stale) is False
+    assert store.count() == 0
+
+    current = GalleryWindowResult(
+        generation=request.generation,
+        first=0,
+        last=0,
+        rows={0: dto},
+        total_count=1,
+        collection_revision=request.collection_revision,
+        requested_revision=request.collection_revision,
+    )
+    assert store.apply_window_result(current) is True
+    assert store.asset_at(0) is dto
+
+
+def test_async_ensure_row_loaded_only_schedules_window() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 1_000
+    requests.clear()
+
+    assert store.ensure_row_loaded(700) is False
+    assert service.read_calls == []
+    assert len(requests) == 1
+    assert requests[0].retain_when_stale is True
+
+
+def test_async_ensure_row_loaded_emits_when_requested_row_arrives() -> None:
+    service = _FakeQueryService([])
+    requests = []
+    store = GalleryCollectionStore(service, library_root=Path("."))
+    store.set_window_request_handler(requests.append)
+    store.load_selection(Path("."), query=AssetQuery())
+    store._total_count = 1_000
+    requests.clear()
+    loaded = []
+    store.row_loaded.connect(loaded.append)
+
+    assert store.ensure_row_loaded(700) is False
+    request = requests[-1]
+    dto = scan_row_to_dto(
+        Path("."),
+        "deep.jpg",
+        {"id": "deep", "rel": "deep.jpg", "media_type": 0},
+    )
+    assert dto is not None
+
+    assert store.apply_window_result(
+        GalleryWindowResult(
+            generation=request.generation,
+            first=request.view_first,
+            last=700,
+            rows={700: dto},
+            total_count=1_000,
+            collection_revision=request.collection_revision,
+            requested_revision=request.collection_revision,
+        )
+    )
+    assert loaded == [700]
+
+
+def test_async_window_preserves_optimistic_move_destination(tmp_path: Path, qapp) -> None:
+    del qapp
+    root = tmp_path / "Library"
+    source_root = root / "Album"
+    target_root = root / "Target"
+    source_root.mkdir(parents=True)
+    target_root.mkdir()
+    assets = [
+        Asset(
+            id="moving",
+            album_id="a",
+            path=Path("Album/moving.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        ),
+        Asset(
+            id="existing",
+            album_id="b",
+            path=Path("Album/existing.jpg"),
+            parent_album_path="Album",
+            media_type=MediaType.IMAGE,
+            size_bytes=1,
+        ),
+    ]
+    service = _FakeQueryService(assets, library_root=root)
+    store = GalleryCollectionStore(service, library_root=root)
+    store._path_cache.exists_cached = lambda path: True  # type: ignore[method-assign]
+    store.load_selection(root, query=AssetQuery())
+
+    removed_rows, inserted = store.apply_optimistic_move(
+        [source_root / "moving.jpg"],
+        target_root,
+        is_delete=False,
+    )
+    store.remove_rows(removed_rows, emit=False)
+    store.append_dtos(inserted)
+
+    requests: list[GalleryWindowRequest] = []
+    store.set_window_request_handler(requests.append)
+    store.prioritize_rows(0, 1)
+
+    request = requests[-1]
+    assert [dto.abs_path for dto in request.pending_insertions] == [
+        target_root / "moving.jpg"
+    ]
+
+    results = []
+    signals = _GalleryWindowSignals()
+    signals.completed.connect(results.append)
+    _GalleryWindowWorker(request, signals).run()
+
+    assert results[0].total_count == 2
+    assert [dto.abs_path for dto in results[0].rows.values()] == [
+        root / "Album" / "existing.jpg",
+        target_root / "moving.jpg",
+    ]
+
+
+def test_async_window_fetches_replacement_rows_for_pending_sources(qapp) -> None:
+    del qapp
+
+    class _WindowService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def read_gallery_asset_window(
+            self,
+            root: Path,
+            query: AssetQuery,
+            first: int,
+            limit: int,
+        ) -> WindowResult:
+            del root, query
+            self.calls.append((first, limit))
+            return WindowResult(
+                first=first,
+                rows=[
+                    {"id": str(index), "rel": f"{index}.jpg", "media_type": 0}
+                    for index in range(4)
+                ],
+                total_count=4,
+                collection_revision=1,
+            )
+
+    service = _WindowService()
+    request = GalleryWindowRequest(
+        generation=1,
+        root=Path("/library"),
+        query=AssetQuery(),
+        query_service=service,
+        view_first=0,
+        raw_first=0,
+        limit=3,
+        pending_source_ids=frozenset({"1"}),
+        pending_source_count=1,
+        request_backfill=False,
+    )
+    results = []
+    signals = _GalleryWindowSignals()
+    signals.completed.connect(results.append)
+
+    _GalleryWindowWorker(request, signals).run()
+
+    assert service.calls == [(0, 4)]
+    assert results[0].last == 2
+    assert results[0].total_count == 3
+    assert [dto.id for dto in results[0].rows.values()] == ["0", "2", "3"]
 
 
 def test_row_for_path_uses_query_lookup_without_scanning_batches() -> None:

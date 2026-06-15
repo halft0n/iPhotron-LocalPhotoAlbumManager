@@ -283,6 +283,62 @@ class LibraryAssetQueryService:
             collection_revision=0,
         )
 
+    def read_gallery_asset_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a lightweight Gallery window suitable for background decoding."""
+
+        read_query = copy.deepcopy(query)
+        read_query.offset = max(0, int(first))
+        read_query.limit = max(0, int(limit))
+        album_path = self.album_path_for(root)
+        if self._can_use_collection_api(read_query):
+            read_gallery_window = getattr(
+                self._repository(),
+                "read_gallery_collection_window",
+                None,
+            )
+            if callable(read_gallery_window):
+                window = read_gallery_window(
+                    self._collection_query_for_asset_query(read_query),
+                    read_query.offset,
+                    read_query.limit or 0,
+                )
+                return WindowResult(
+                    first=window.first,
+                    rows=list(self._scoped_rows(window.rows, album_path)),
+                    total_count=window.total_count,
+                    collection_revision=window.collection_revision,
+                )
+        return self.read_query_asset_window(root, read_query, first, limit)
+
+    def read_thumbnail_hint_window(
+        self,
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> WindowResult:
+        """Return a count-free path/cache-key projection for Gallery prediction."""
+
+        if not self._can_use_collection_api(query):
+            return WindowResult(first=first, rows=[], total_count=-1, collection_revision=0)
+        reader = getattr(self._repository(), "read_thumbnail_hint_window", None)
+        if not callable(reader):
+            return WindowResult(first=first, rows=[], total_count=-1, collection_revision=0)
+        album_path = self.album_path_for(root)
+        window = reader(self._collection_query_for_asset_query(query), first, limit)
+        return WindowResult(
+            first=window.first,
+            rows=list(self._scoped_rows(window.rows, album_path)),
+            total_count=-1,
+            collection_revision=window.collection_revision,
+        )
+
     def count_collection(self, query: CollectionQuery) -> int:
         """Return the number of assets matching a SQL-first collection query."""
 
@@ -323,16 +379,24 @@ class LibraryAssetQueryService:
         if not self._can_use_collection_api(query):
             return []
         album_path = self.album_path_for(root)
-        return list(
-            self._scoped_rows(
-                read_candidates(
-                    self._collection_query_for_asset_query(query),
-                    first,
-                    limit,
-                ),
-                album_path,
+        collection_query = self._collection_query_for_asset_query(query)
+        candidates = list(read_candidates(collection_query, first, limit))
+
+        # Ready rows from older libraries may have a valid 512 cache but no
+        # micro layer. Include them so ensure_scan_thumbnail() can derive the
+        # micro image from L2 without decoding the source media again.
+        read_gallery_window = getattr(self._repository(), "read_gallery_collection_window", None)
+        if callable(read_gallery_window):
+            ready_window = read_gallery_window(collection_query, first, limit)
+            seen = {str(row.get("rel")) for row in candidates}
+            candidates.extend(
+                row
+                for row in ready_window.rows
+                if row.get("micro_thumbnail") is None
+                and str(row.get("rel")) not in seen
             )
-        )
+
+        return list(self._scoped_rows(candidates, album_path))
 
     def request_thumbnail_backfill(
         self,
@@ -347,12 +411,7 @@ class LibraryAssetQueryService:
         update_thumbnail_ready = getattr(repository, "update_thumbnail_ready", None)
         if not callable(update_thumbnail_ready):
             return 0
-        if self._thumbnail_backfill_shutdown:
-            return 0
-
-        album_path = self.album_path_for(root)
-        candidates = self.read_thumbnail_backfill_candidates(root, query, first, limit)
-        if not candidates:
+        if self._thumbnail_backfill_shutdown or not self._can_use_collection_api(query):
             return 0
 
         request_key = (root.as_posix(), max(0, int(first)), max(0, int(limit)), repr(query))
@@ -361,15 +420,15 @@ class LibraryAssetQueryService:
                 return 0
             self._thumbnail_backfill_pending.add(request_key)
 
-        self.thumbnail_backfill_progress.emit(Path(root), 0, len(candidates))
         self._thumbnail_backfill_executor.submit(
-            self._run_thumbnail_backfill,
+            self._discover_and_run_thumbnail_backfill,
             request_key,
             Path(root),
-            album_path,
-            candidates,
+            copy.deepcopy(query),
+            max(0, int(first)),
+            max(0, int(limit)),
         )
-        return len(candidates)
+        return 1
 
     def thumbnail_backfill_pending(self) -> bool:
         """Return whether any queued stale thumbnail backfill is still active."""
@@ -412,6 +471,7 @@ class LibraryAssetQueryService:
                     abs_path,
                     str(row.get("id") or library_rel),
                     thumbnail_cache_dir=self._thumbnail_cache_dir(),
+                    prefer_cached_micro=True,
                 )
                 if thumbnail.thumb_error:
                     update_thumbnail_ready(library_rel, error=thumbnail.thumb_error)
@@ -447,6 +507,34 @@ class LibraryAssetQueryService:
         finally:
             with self._thumbnail_backfill_lock:
                 self._thumbnail_backfill_pending.discard(request_key)
+
+    def _discover_and_run_thumbnail_backfill(
+        self,
+        request_key: tuple[str, int, int, str],
+        root: Path,
+        query: AssetQuery,
+        first: int,
+        limit: int,
+    ) -> None:
+        """Discover and process old-library micro gaps away from the Gallery loader."""
+
+        with self._thumbnail_backfill_lock:
+            if self._thumbnail_backfill_shutdown:
+                self._thumbnail_backfill_pending.discard(request_key)
+                return
+        try:
+            candidates = self.read_thumbnail_backfill_candidates(root, query, first, limit)
+            self.thumbnail_backfill_progress.emit(root, 0, len(candidates))
+            self._run_thumbnail_backfill(
+                request_key,
+                root,
+                self.album_path_for(root),
+                candidates,
+            )
+        except Exception:
+            with self._thumbnail_backfill_lock:
+                self._thumbnail_backfill_pending.discard(request_key)
+            raise
 
     def find_row_by_path(self, query: CollectionQuery | AssetQuery, path: Path) -> int | None:
         """Locate *path* in a collection without materialising every row."""

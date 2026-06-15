@@ -457,7 +457,7 @@ class MainCoordinator(QObject):
 
         # Grid interactions
         ui.grid_view.itemClicked.connect(self._on_asset_clicked)
-        ui.grid_view.visibleRowsChanged.connect(self._asset_list_vm.prioritize_rows)
+        ui.grid_view.viewportStateChanged.connect(self._asset_list_vm.update_viewport)
 
         # Filmstrip clicks are now handled by PlaybackCoordinator
 

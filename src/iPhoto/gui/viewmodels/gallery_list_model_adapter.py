@@ -12,17 +12,37 @@ from PySide6.QtCore import (
     Qt,
     QThread,
     QTimer,
-    Signal as QtSignal,
     Slot,
 )
+from PySide6.QtCore import (
+    Signal as QtSignal,
+)
+from PySide6.QtGui import QImage, QPixmap
+
 from iPhoto.application.dtos import AssetDTO
 from iPhoto.application.ports import EditServicePort
+from iPhoto.domain.models.query import AssetQuery
+from iPhoto.gui.gallery_demand import GalleryViewportDemand
 from iPhoto.gui.ui.models.roles import Roles, role_names
-from iPhoto.infrastructure.services.performance_events import emit_perf_event
-from iPhoto.infrastructure.services.thumbnail_cache_service import ThumbnailCacheService
+from iPhoto.infrastructure.services.performance_events import (
+    emit_perf_event,
+    perf_logging_enabled,
+)
+from iPhoto.infrastructure.services.thumbnail_cache_service import (
+    ThumbnailCacheService,
+    ThumbnailPrefetchCandidate,
+)
 from iPhoto.utils.geocoding import resolve_location_name
 
 from .gallery_collection_store import GalleryCollectionStore
+from .gallery_thumbnail_hint_loader import (
+    GalleryThumbnailCandidate,
+    GalleryThumbnailHintLoader,
+    GalleryThumbnailHintRequest,
+    GalleryThumbnailHintResult,
+)
+from .gallery_tile import GalleryTileRecord, GalleryTileSnapshot
+from .gallery_window_loader import GalleryWindowLoader, GalleryWindowResult
 
 
 class GalleryListModelAdapter(QAbstractListModel):
@@ -49,12 +69,26 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._last_window_identity_signature: tuple[str, ...] | None = None
         self._duration_cache: dict[Path, float] = {}
         self._pending_prioritize_range: tuple[int, int] | None = None
+        self._viewport_generation = 0
+        self._viewport_demand: GalleryViewportDemand | None = None
+        self._pending_thumbnail_rows: set[int] = set()
+        self._window_loader = GalleryWindowLoader(self)
+        self._window_loader.resultReady.connect(self._on_window_result)
+        self._window_loader.requestsDropped.connect(self._store.discard_window_requests)
+        self._thumbnail_hint_loader = GalleryThumbnailHintLoader(self)
+        self._thumbnail_hint_loader.resultReady.connect(self._on_thumbnail_hint_result)
+        self._thumbnail_hint_candidates: tuple[GalleryThumbnailCandidate, ...] = ()
+        self._thumbnail_hint_request_id = 0
         self._pending_scan_batch_count = 0
         self._backfill_completion_source: Any | None = None
         self._prioritize_timer = QTimer(self)
         self._prioritize_timer.setSingleShot(True)
         self._prioritize_timer.setInterval(16)
         self._prioritize_timer.timeout.connect(self._flush_pending_prioritize_rows)
+        self._thumbnail_update_timer = QTimer(self)
+        self._thumbnail_update_timer.setSingleShot(True)
+        self._thumbnail_update_timer.setInterval(0)
+        self._thumbnail_update_timer.timeout.connect(self._flush_thumbnail_updates)
         self._scan_batch_timer = QTimer(self)
         self._scan_batch_timer.setSingleShot(True)
         self._scan_batch_timer.setInterval(150)
@@ -63,6 +97,7 @@ class GalleryListModelAdapter(QAbstractListModel):
             self._enqueue_scan_batch_on_ui_thread,
             Qt.ConnectionType.QueuedConnection,
         )
+        self._store.set_window_request_handler(self._window_loader.request)
 
         self._store.window_changed.connect(self._on_window_changed)
         self._store.data_changed.connect(self._on_source_changed)
@@ -114,20 +149,47 @@ class GalleryListModelAdapter(QAbstractListModel):
             return False
 
         asset: Optional[AssetDTO] = self._store.asset_at(row)
-        if asset is None:
-            self._store.ensure_row_loaded(row, emit_signals=False)
-            asset = self._store.asset_at(row)
         if not asset:
+            if role_int == Roles.TILE_SNAPSHOT:
+                return GalleryTileSnapshot(
+                    record=None,
+                    micro_image=None,
+                    full_pixmap=None,
+                    loading_state="placeholder",
+                    is_current=row == self._current_row,
+                )
             return None
 
         if role_int == Qt.ItemDataRole.DisplayRole:
             return asset.rel_path.name
-        if role_int == Qt.DecorationRole:
-            return self._thumbnails.get_thumbnail(
-                asset.abs_path,
-                self._thumb_size,
-                priority="visible",
+        if role_int == Roles.TILE_SNAPSHOT:
+            full = self._thumbnails.peek_full_thumbnail(asset.abs_path, self._thumb_size)
+            micro = asset.micro_thumbnail if isinstance(asset.micro_thumbnail, QImage) else None
+            loading_state = (
+                "full"
+                if isinstance(full, QPixmap) and not full.isNull()
+                else "micro"
+                if micro is not None and not micro.isNull()
+                else "placeholder"
             )
+            return GalleryTileSnapshot(
+                record=GalleryTileRecord(
+                    asset_id=str(asset.id),
+                    abs_path=asset.abs_path,
+                    rel_path=asset.rel_path,
+                    media_type=asset.media_type,
+                    duration=asset.duration,
+                    is_favorite=asset.is_favorite,
+                    is_live=asset.is_live,
+                    is_pano=asset.is_pano,
+                ),
+                micro_image=micro,
+                full_pixmap=full if isinstance(full, QPixmap) else None,
+                loading_state=loading_state,
+                is_current=row == self._current_row,
+            )
+        if role_int == Qt.DecorationRole:
+            return self._thumbnails.peek_full_thumbnail(asset.abs_path, self._thumb_size)
         if role_int == Qt.ItemDataRole.ToolTipRole:
             return str(asset.abs_path)
 
@@ -217,16 +279,23 @@ class GalleryListModelAdapter(QAbstractListModel):
     def prioritize_rows(self, first: int, last: int) -> None:
         first = max(0, int(first))
         last = max(first, int(last))
-        if self._pending_prioritize_range is None:
-            self._pending_prioritize_range = (first, last)
-        else:
-            pending_first, pending_last = self._pending_prioritize_range
-            self._pending_prioritize_range = (
-                min(pending_first, first),
-                max(pending_last, last),
-            )
+        self._pending_prioritize_range = (first, last)
         if not self._prioritize_timer.isActive():
             self._prioritize_timer.start()
+
+    @Slot(object)
+    def update_viewport(self, state: object) -> None:
+        """Continuously reconcile micro warm-up and full-thumbnail demand."""
+
+        if not isinstance(state, GalleryViewportDemand):
+            return
+        self._thumb_size = QSize(state.display_bucket, state.display_bucket)
+        self._viewport_generation = state.generation
+        self._viewport_demand = state
+        self._thumbnail_hint_candidates = ()
+        self._store.reconcile_viewport_demand(state)
+        self._request_thumbnail_hints(state)
+        self._reconcile_full_thumbnail_demand()
 
     @Slot()
     def _flush_pending_prioritize_rows(self) -> None:
@@ -235,6 +304,11 @@ class GalleryListModelAdapter(QAbstractListModel):
         if pending is None:
             return
         self._store.prioritize_rows(*pending)
+
+    @Slot(object)
+    def _on_window_result(self, result: GalleryWindowResult) -> None:
+        if self._store.apply_window_result(result):
+            self._reconcile_full_thumbnail_demand()
 
     @Slot(object)
     def handle_scan_batch(self, batch: object) -> None:
@@ -288,6 +362,9 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._last_selection_signature = None
         self._last_window_identity_signature = None
         self._duration_cache.clear()
+        self._thumbnail_hint_candidates = ()
+        self._thumbnail_hint_request_id += 1
+        self._thumbnail_hint_loader.cancel_pending()
         self._store.rebind_asset_query_service(asset_query_service, library_root)
         self._bind_backfill_completion_signal(asset_query_service)
 
@@ -306,9 +383,15 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._store.update_favorite_status(row, is_favorite)
         idx = self.index(row, 0)
         if idx.isValid():
-            self.dataChanged.emit(idx, idx, [Roles.FEATURED])
+            self.dataChanged.emit(idx, idx, [Roles.FEATURED, Roles.TILE_SNAPSHOT])
 
-    def optimistic_move_paths(self, paths: list[Path], destination_root: Path, *, is_delete: bool) -> bool:
+    def optimistic_move_paths(
+        self,
+        paths: list[Path],
+        destination_root: Path,
+        *,
+        is_delete: bool,
+    ) -> bool:
         removed_rows, inserted_dtos = self._store.apply_optimistic_move(
             paths,
             destination_root,
@@ -359,11 +442,19 @@ class GalleryListModelAdapter(QAbstractListModel):
         if old_row >= 0:
             idx = self.index(old_row, 0)
             if idx.isValid():
-                self.dataChanged.emit(idx, idx, [Roles.IS_CURRENT, Qt.ItemDataRole.SizeHintRole])
+                self.dataChanged.emit(
+                    idx,
+                    idx,
+                    [Roles.IS_CURRENT, Roles.TILE_SNAPSHOT, Qt.ItemDataRole.SizeHintRole],
+                )
         if row >= 0:
             idx = self.index(row, 0)
             if idx.isValid():
-                self.dataChanged.emit(idx, idx, [Roles.IS_CURRENT, Qt.ItemDataRole.SizeHintRole])
+                self.dataChanged.emit(
+                    idx,
+                    idx,
+                    [Roles.IS_CURRENT, Roles.TILE_SNAPSHOT, Qt.ItemDataRole.SizeHintRole],
+                )
 
     def metadata_for_path(self, path: Path) -> Optional[Dict[str, Any]]:
         dto = self._store.find_dto_by_path(path)
@@ -395,7 +486,7 @@ class GalleryListModelAdapter(QAbstractListModel):
                 return rel_path, rel_path
             library_root = self._store.library_root()
             if library_root is not None:
-                return rel_path, (library_root / rel_path).resolve()
+                return rel_path, library_root / rel_path
             return rel_path, None
 
         group_id = metadata.get("live_photo_group_id")
@@ -529,12 +620,156 @@ class GalleryListModelAdapter(QAbstractListModel):
             self.dataChanged.emit(top, bottom, [])
 
     def _on_thumbnail_ready(self, path: Path) -> None:
-        row = self._store.row_for_path(path)
+        row = self._store.cached_row_for_path(path)
         if row is None:
             return
-        idx = self.index(row, 0)
-        if idx.isValid():
-            self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
+        self._pending_thumbnail_rows.add(row)
+        if not self._thumbnail_update_timer.isActive():
+            self._thumbnail_update_timer.start()
+
+    @Slot()
+    def _flush_thumbnail_updates(self) -> None:
+        rows = sorted(self._pending_thumbnail_rows)
+        self._pending_thumbnail_rows.clear()
+        if not rows:
+            return
+        range_first = rows[0]
+        range_last = rows[0]
+        for row in rows[1:]:
+            if row == range_last + 1:
+                range_last = row
+                continue
+            self._emit_thumbnail_range(range_first, range_last)
+            range_first = range_last = row
+        self._emit_thumbnail_range(range_first, range_last)
+
+    def _emit_thumbnail_range(self, first: int, last: int) -> None:
+        top = self.index(first, 0)
+        bottom = self.index(last, 0)
+        if top.isValid() and bottom.isValid():
+            self.dataChanged.emit(
+                top,
+                bottom,
+                [Qt.DecorationRole, Roles.TILE_SNAPSHOT],
+            )
+
+    def _reconcile_full_thumbnail_demand(self) -> None:
+        demand = self._viewport_demand
+        if demand is None:
+            return
+        visible_rows = self._store.cached_rows(*demand.visible_range)
+        prefetched_rows = dict(self._store.cached_rows(*demand.full_prefetch_range))
+        cached_prefetch_paths = [
+            prefetched_rows[row].abs_path
+            for row in demand.iter_full_prefetch_rows()
+            if row in prefetched_rows
+        ]
+        hinted_paths = [candidate.path for candidate in self._thumbnail_hint_candidates]
+        prefetch_paths = list(dict.fromkeys((*hinted_paths, *cached_prefetch_paths)))
+        if perf_logging_enabled():
+            full_count = 0
+            micro_count = 0
+            for _row, dto in visible_rows:
+                if self._thumbnails.has_full_thumbnail(dto.abs_path, self._thumb_size) is True:
+                    full_count += 1
+                elif isinstance(dto.micro_thumbnail, QImage) and not dto.micro_thumbnail.isNull():
+                    micro_count += 1
+            visible_count = demand.visible_last - demand.visible_first + 1
+            emit_perf_event(
+                "gallery_visible_layers",
+                generation=demand.generation,
+                phase=demand.phase,
+                visible=visible_count,
+                full=full_count,
+                micro=micro_count,
+                placeholder=max(0, visible_count - full_count - micro_count),
+            )
+        self._thumbnails.reconcile_demand(
+            visible_paths=[dto.abs_path for _row, dto in visible_rows],
+            prefetch_paths=prefetch_paths,
+            size=self._thumb_size,
+            generation=demand.generation,
+            phase=demand.phase,
+            intent=demand.intent,
+            prefetch_candidates=tuple(
+                ThumbnailPrefetchCandidate(
+                    path=candidate.path,
+                    l2_cache_key=candidate.l2_cache_key,
+                    kind=candidate.kind,
+                    rank=candidate.rank,
+                )
+                for candidate in self._thumbnail_hint_candidates
+            ),
+        )
+
+    def _request_thumbnail_hints(self, demand: GalleryViewportDemand) -> None:
+        if demand.intent == "continuous_burst":
+            self._thumbnail_hint_request_id += 1
+            self._thumbnail_hint_loader.cancel_pending()
+            return
+        query = self._store.current_query()
+        root = self._store.active_root() or self._store.library_root()
+        query_service = self._current_asset_query_service()
+        reader = getattr(query_service, "read_thumbnail_hint_window", None)
+        ordered_rows = tuple(demand.iter_full_prefetch_rows())
+        if (
+            not isinstance(query, AssetQuery)
+            or root is None
+            or not callable(reader)
+            or not ordered_rows
+        ):
+            return
+        visible_count = demand.visible_last - demand.visible_first + 1
+        predictive_rows = (
+            frozenset(ordered_rows[:visible_count])
+            if demand.prefetch_direction
+            else frozenset()
+        )
+        emit_perf_event(
+            "gallery_thumbnail_hint_requested",
+            generation=demand.generation,
+            intent=demand.intent,
+            first=demand.full_prefetch_first,
+            limit=demand.full_prefetch_last - demand.full_prefetch_first + 1,
+            predictive_rows=len(predictive_rows),
+        )
+        self._thumbnail_hint_request_id += 1
+        request_id = self._thumbnail_hint_request_id
+        self._thumbnail_hint_loader.request(
+            GalleryThumbnailHintRequest(
+                request_id=request_id,
+                generation=demand.generation,
+                root=Path(root),
+                query=query,
+                query_service=query_service,
+                first=demand.full_prefetch_first,
+                limit=demand.full_prefetch_last - demand.full_prefetch_first + 1,
+                ordered_rows=ordered_rows,
+                predictive_rows=predictive_rows,
+            )
+        )
+
+    @Slot(object)
+    def _on_thumbnail_hint_result(self, result: GalleryThumbnailHintResult) -> None:
+        demand = self._viewport_demand
+        if (
+            demand is None
+            or result.error is not None
+            or result.request_id != self._thumbnail_hint_request_id
+            or result.generation != demand.generation
+            or demand.intent == "continuous_burst"
+        ):
+            return
+        self._thumbnail_hint_candidates = result.candidates
+        emit_perf_event(
+            "gallery_next_screen_hint_coverage",
+            generation=result.generation,
+            predictive=sum(
+                candidate.kind == "predictive" for candidate in result.candidates
+            ),
+            total=len(result.candidates),
+        )
+        self._reconcile_full_thumbnail_demand()
 
     def _on_row_changed(self, row: int) -> None:
         idx = self.index(row, 0)
@@ -542,7 +777,7 @@ class GalleryListModelAdapter(QAbstractListModel):
             self.dataChanged.emit(
                 idx,
                 idx,
-                [Roles.FEATURED, Roles.INFO, Roles.LOCATION, Roles.SIZE],
+                [Roles.FEATURED, Roles.INFO, Roles.LOCATION, Roles.SIZE, Roles.TILE_SNAPSHOT],
             )
 
     def _current_asset_query_service(self) -> Any | None:

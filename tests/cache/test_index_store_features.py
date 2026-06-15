@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -812,6 +813,51 @@ def test_collection_window_reuses_count_revision_cache_until_invalidation(store:
     )
 
     assert store._collection_meta_cache == {}
+
+
+def test_gallery_collection_window_uses_light_projection_with_micro(store: IndexStore) -> None:
+    store.write_rows(
+        [
+            {
+                "rel": "ready.jpg",
+                "id": "ready",
+                "thumbnail_state": "ready",
+                "micro_thumbnail": b"thumb",
+                "thumb_cache_key": "thumb-ready",
+                "metadata": {"camera": "wide-column"},
+            }
+        ]
+    )
+
+    rows = store.read_gallery_collection_window(CollectionQuery(), 0, 10).rows
+
+    assert len(rows) == 1
+    assert rows[0]["micro_thumbnail"] == b"thumb"
+    assert "metadata" not in rows[0]
+
+
+def test_thumbnail_hint_window_omits_micro_and_does_not_count(store: IndexStore) -> None:
+    store.write_rows(
+        [
+            {
+                "rel": "ready.jpg",
+                "id": "ready",
+                "thumbnail_state": "ready",
+                "micro_thumbnail": b"thumb",
+                "thumb_cache_key": "thumb-ready",
+            }
+        ]
+    )
+
+    with patch.object(
+        store,
+        "_collection_count_and_revision",
+        side_effect=AssertionError("hint reads must not count"),
+    ):
+        window = store.read_thumbnail_hint_window(CollectionQuery(), 0, 10)
+
+    assert window.total_count == -1
+    assert window.rows == [{"rel": "ready.jpg", "thumb_cache_key": "thumb-ready"}]
 
 
 def test_thumbnail_backfill_candidates_and_ready_update(store: IndexStore) -> None:
