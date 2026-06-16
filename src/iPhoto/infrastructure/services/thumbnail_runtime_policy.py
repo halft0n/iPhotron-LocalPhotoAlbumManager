@@ -93,6 +93,8 @@ class ThumbnailRuntimePolicy:
     prefetch_miss_ttl_seconds: float = 2.0
     visible_queue_wait_p95_ms: float = 12.0
     far_speculative_workers: int = 1
+    l1_replacement_threshold_ratio: float = 0.95
+    l1_replacement_target_ratio: float = 0.88
 
     @classmethod
     def detect(
@@ -111,10 +113,14 @@ class ThumbnailRuntimePolicy:
         )
         publish_max_items = 2
         publish_budget_ms = 3.0
+        l1_replacement_threshold_ratio = 0.95
+        l1_replacement_target_ratio = 0.88
         if platform_name.startswith("win"):
             prefetch_workers = 4
             publish_max_items = 4
             publish_budget_ms = 5.0
+            l1_replacement_threshold_ratio = 0.90
+            l1_replacement_target_ratio = 0.72
         elif platform_name.startswith("linux"):
             prefetch_workers = 3
             publish_max_items = 4
@@ -133,6 +139,8 @@ class ThumbnailRuntimePolicy:
             publish_max_items=publish_max_items,
             publish_budget_ms=publish_budget_ms,
             staging_limit=max(8, prefetch_workers * 4),
+            l1_replacement_threshold_ratio=l1_replacement_threshold_ratio,
+            l1_replacement_target_ratio=l1_replacement_target_ratio,
         )
 
 

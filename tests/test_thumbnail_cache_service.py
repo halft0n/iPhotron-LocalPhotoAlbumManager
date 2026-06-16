@@ -596,6 +596,52 @@ def test_memory_pressure_evicts_farthest_prefetch_before_visible(
     assert far_key not in service._memory_cache
 
 
+def test_windows_l1_refresh_replaces_old_pages_when_saturated(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 16 * 1024**3),
+        memory_limit_bytes=5 * 8 * 8 * 4,
+        l1_replacement_threshold_ratio=0.90,
+        l1_replacement_target_ratio=0.72,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(8, 8)
+    visible = tmp_path / "visible.jpg"
+    near = tmp_path / "near.jpg"
+    future = tmp_path / "future.jpg"
+    old_paths = [tmp_path / f"old-{index}.jpg" for index in range(3)]
+    visible_key = service._cache_key(visible, size)
+    near_key = service._cache_key(near, size)
+    future_key = service._cache_key(future, size)
+    old_keys = [service._cache_key(path, size) for path in old_paths]
+    pixmap = QPixmap(8, 8)
+
+    for key in (*old_keys, visible_key, near_key):
+        service._add_to_memory(key, pixmap)
+
+    assert service._memory_used_bytes == policy.memory_limit_bytes
+
+    with patch.object(service, "_start_generation"):
+        service.reconcile_demand(
+            visible_paths=[visible],
+            prefetch_paths=[near, future],
+            size=size,
+            generation=1,
+            phase="slow",
+            intent="slow_continuous",
+        )
+
+    assert visible_key in service._memory_cache
+    assert near_key in service._memory_cache
+    assert any(key not in service._memory_cache for key in old_keys)
+    assert future_key in service._prefetch_pending
+    assert service._memory_used_bytes <= int(
+        policy.memory_limit_bytes * policy.l1_replacement_target_ratio
+    )
+
+
 def test_l2_reader_opens_once_without_exists_or_read_bytes(tmp_path: Path) -> None:
     service = ThumbnailCacheService(tmp_path / "thumbs")
     path = tmp_path / "photo.jpg"

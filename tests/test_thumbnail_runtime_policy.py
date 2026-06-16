@@ -17,6 +17,8 @@ def test_windows_uses_global_memory_probe_and_four_predictive_workers() -> None:
     assert policy.prefetch_max_workers == 4
     assert policy.publish_max_items == 4
     assert policy.publish_budget_ms == 5.0
+    assert policy.l1_replacement_threshold_ratio == 0.90
+    assert policy.l1_replacement_target_ratio == 0.72
 
 
 def test_linux_uses_sysconf_and_three_predictive_workers() -> None:
@@ -42,6 +44,8 @@ def test_macos_keeps_single_speculative_worker() -> None:
 
     assert policy.memory_limit_bytes == 384 * 1024**2
     assert policy.prefetch_max_workers == 1
+    assert policy.l1_replacement_threshold_ratio == 0.95
+    assert policy.l1_replacement_target_ratio == 0.88
 
 
 def test_memory_probe_failure_falls_back_to_two_gib() -> None:

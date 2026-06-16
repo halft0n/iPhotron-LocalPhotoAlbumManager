@@ -282,6 +282,10 @@ class ThumbnailCacheService(QObject):
             visible_workers=self._runtime_policy.visible_workers,
             prefetch_max_workers=self._runtime_policy.prefetch_max_workers,
             far_speculative_workers=self._runtime_policy.far_speculative_workers,
+            l1_replacement_threshold_ratio=(
+                self._runtime_policy.l1_replacement_threshold_ratio
+            ),
+            l1_replacement_target_ratio=self._runtime_policy.l1_replacement_target_ratio,
         )
 
     def shutdown(self):
@@ -482,6 +486,7 @@ class ThumbnailCacheService(QObject):
         self._current_generation = max(self._current_generation, int(generation))
         self.pin_visible(visible, size)
         self._prefetch_key_order = [self._cache_key(path, size) for path in prefetch]
+        self._refresh_l1_for_demand(desired_visible_keys, desired_prefetch_keys)
         self._demote_stale_promotions(desired_visible_keys)
 
         drop_keys = set(self._queued_tasks) - desired_visible_keys
@@ -1579,41 +1584,56 @@ class ThumbnailCacheService(QObject):
             memory_limit_bytes=self._memory_limit_bytes,
             capacity_tiles=max(1, self._memory_limit_bytes // max(1, estimated_bytes)),
         )
-        while self._memory_used_bytes > self._memory_limit_bytes and len(self._memory_cache) > 1:
-            eviction_reason = "old_demand"
-            evicted_key = next(
-                (
-                    candidate
-                    for candidate in self._memory_cache
-                    if candidate in self._memory_cache
-                    and candidate not in self._pinned_keys
-                    and candidate not in self._prefetch_key_order
-                    and candidate != key
-                ),
-                None,
-            )
-            if evicted_key is None:
-                eviction_reason = "far_prefetch"
-                evicted_key = next(
-                    (
-                        candidate
-                        for candidate in reversed(self._prefetch_key_order)
-                        if candidate in self._memory_cache
-                        and candidate not in self._pinned_keys
-                        and candidate != key
-                    ),
-                    None,
-                )
-            if evicted_key is None:
-                eviction_reason = "lru"
-                evicted_key = next(
-                    (
-                        candidate
-                        for candidate in self._memory_cache
-                        if candidate not in self._pinned_keys and candidate != key
-                    ),
-                    None,
-                )
+        self._evict_l1_until(
+            self._memory_limit_bytes,
+            protected_keys={key},
+            reason_prefix="memory_pressure",
+        )
+
+    def _refresh_l1_for_demand(
+        self,
+        desired_visible_keys: Set[str],
+        desired_prefetch_keys: Set[str],
+    ) -> None:
+        desired_keys = desired_visible_keys | desired_prefetch_keys
+        if not desired_keys or self._memory_limit_bytes <= 0:
+            return
+        for key in (*desired_visible_keys, *self._prefetch_key_order):
+            if key in self._memory_cache:
+                self._memory_cache.move_to_end(key)
+        threshold = max(
+            1,
+            int(
+                self._memory_limit_bytes
+                * self._runtime_policy.l1_replacement_threshold_ratio
+            ),
+        )
+        if self._memory_used_bytes < threshold:
+            return
+        target = max(
+            1,
+            int(
+                self._memory_limit_bytes
+                * self._runtime_policy.l1_replacement_target_ratio
+            ),
+        )
+        self._evict_l1_until(
+            min(threshold, target),
+            protected_keys=desired_keys,
+            reason_prefix="demand_refresh",
+        )
+
+    def _evict_l1_until(
+        self,
+        target_bytes: int,
+        *,
+        protected_keys: Set[str] | None = None,
+        reason_prefix: str = "memory_pressure",
+    ) -> None:
+        protected = set(protected_keys or set()) | self._pinned_keys
+        target = max(0, int(target_bytes))
+        while self._memory_used_bytes > target:
+            evicted_key, eviction_reason = self._select_l1_eviction_candidate(protected)
             if evicted_key is None:
                 break
             self._memory_cache.pop(evicted_key, None)
@@ -1621,10 +1641,52 @@ class ThumbnailCacheService(QObject):
             emit_perf_event(
                 "thumbnail_l1_evicted",
                 key=evicted_key,
-                reason=eviction_reason,
+                reason=(
+                    eviction_reason
+                    if reason_prefix == "memory_pressure"
+                    else f"{reason_prefix}_{eviction_reason}"
+                ),
                 memory_used_bytes=self._memory_used_bytes,
                 memory_limit_bytes=self._memory_limit_bytes,
             )
+
+    def _select_l1_eviction_candidate(
+        self,
+        protected_keys: Set[str],
+    ) -> tuple[str | None, str]:
+        old_demand = next(
+            (
+                candidate
+                for candidate in self._memory_cache
+                if candidate not in protected_keys
+                and candidate not in self._prefetch_key_order
+            ),
+            None,
+        )
+        if old_demand is not None:
+            return old_demand, "old_demand"
+        far_prefetch = next(
+            (
+                candidate
+                for candidate in reversed(self._prefetch_key_order)
+                if candidate in self._memory_cache
+                and candidate not in protected_keys
+            ),
+            None,
+        )
+        if far_prefetch is not None:
+            return far_prefetch, "far_prefetch"
+        lru = next(
+            (
+                candidate
+                for candidate in self._memory_cache
+                if candidate not in protected_keys
+            ),
+            None,
+        )
+        if lru is not None:
+            return lru, "lru"
+        return None, "protected"
 
     def _load_cached_thumbnail_only(
         self,
