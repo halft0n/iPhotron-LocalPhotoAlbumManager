@@ -881,6 +881,112 @@ def test_staging_publisher_prioritizes_visible_and_honors_item_budget(
     assert len(service._publish_prefetch) == 1
 
 
+def test_older_generation_active_prefetch_still_caches_when_demand_matches(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "prefetch.jpg"
+    size = QSize(8, 8)
+    key = service._cache_key(path, size)
+    service._current_generation = 7
+    service._current_phase = "settled"
+    service._current_intent = "idle"
+    service._prefetch_key_order = [key]
+    service._prefetch_active_tokens[key] = _CancellationToken()
+    service._prefetch_pending.add(key)
+    service._prefetch_generations[key] = 3
+    service._prefetch_active_tasks = 1
+
+    service._handle_prefetch_result(
+        path,
+        size,
+        QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied),
+        generation=3,
+        kind=ThumbnailRequestKind.PREFETCH,
+    )
+    service._drain_publish_queue()
+
+    assert key in service._memory_cache
+
+
+def test_older_generation_staged_prefetch_still_caches_when_demand_matches(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "prefetch.jpg"
+    size = QSize(8, 8)
+    key = service._cache_key(path, size)
+    service._current_generation = 7
+    service._current_phase = "settled"
+    service._current_intent = "idle"
+    service._prefetch_key_order = [key]
+    service._stage_result(
+        ThumbnailLoadResult(
+            path,
+            size,
+            QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied),
+            3,
+            ThumbnailRequestKind.PREFETCH,
+        )
+    )
+
+    service._drain_publish_queue()
+
+    assert key in service._memory_cache
+
+
+def test_older_generation_visible_result_is_discarded(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "visible.jpg"
+    size = QSize(8, 8)
+    key = service._cache_key(path, size)
+    service._current_generation = 7
+    service._stage_result(
+        ThumbnailLoadResult(
+            path,
+            size,
+            QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied),
+            3,
+            ThumbnailRequestKind.VISIBLE,
+        )
+    )
+
+    service._drain_publish_queue()
+
+    assert key not in service._memory_cache
+
+
+def test_older_prefetch_leaving_demand_is_still_discarded(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    path = tmp_path / "prefetch.jpg"
+    size = QSize(8, 8)
+    key = service._cache_key(path, size)
+    token = service._prefetch_active_tokens[key] = _CancellationToken()
+    token.cancel("demand_replaced")
+    service._prefetch_pending.add(key)
+    service._prefetch_generations[key] = 3
+    service._prefetch_active_tasks = 1
+
+    service._handle_prefetch_result(
+        path,
+        size,
+        QImage(8, 8, QImage.Format.Format_ARGB32_Premultiplied),
+        generation=3,
+        kind=ThumbnailRequestKind.PREFETCH,
+    )
+    service._drain_publish_queue()
+
+    assert key not in service._memory_cache
+
+
 def test_reentered_visible_result_is_reused_from_staging_without_duplicate_worker(
     tmp_path: Path,
 ) -> None:

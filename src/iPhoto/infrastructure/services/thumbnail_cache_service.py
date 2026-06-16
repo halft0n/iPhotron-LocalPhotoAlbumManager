@@ -1092,17 +1092,16 @@ class ThumbnailCacheService(QObject):
             key = self._cache_key(result.path, result.size)
             self._publish_keys.discard(key)
             visible = result.kind is ThumbnailRequestKind.VISIBLE
+            fresh_visible = visible and result.generation >= self._current_generation
+            current_prefetch = (
+                not visible
+                and self._current_phase in ("settled", "slow")
+                and self._current_intent != "continuous_burst"
+                and key in self._prefetch_key_order
+            )
             relevant = (
                 not self._is_shutting_down
-                and result.generation >= self._current_generation
-                and (
-                    visible
-                    or (
-                        self._current_phase in ("settled", "slow")
-                        and self._current_intent != "continuous_burst"
-                        and key in self._prefetch_key_order
-                    )
-                )
+                and (fresh_visible or current_prefetch)
             )
             if relevant and not result.image.isNull():
                 convert_started = monotonic_ms()
@@ -1373,7 +1372,7 @@ class ThumbnailCacheService(QObject):
         is_prefetch = key in self._prefetch_key_order
         stale = (
             self._is_shutting_down
-            or desired_generation < self._current_generation
+            or (is_visible and desired_generation < self._current_generation)
             or token is None
             or token.cancelled()
             or not (is_visible or is_prefetch)
