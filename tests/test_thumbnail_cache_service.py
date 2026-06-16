@@ -642,6 +642,77 @@ def test_windows_l1_refresh_replaces_old_pages_when_saturated(
     )
 
 
+def test_windows_l1_refresh_replaces_old_pages_before_saturation(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    tile_bytes = 8 * 8 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 16 * 1024**3),
+        memory_limit_bytes=100 * tile_bytes,
+        l1_replacement_threshold_ratio=0.90,
+        l1_replacement_target_ratio=0.72,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(8, 8)
+    visible = tmp_path / "visible.jpg"
+    near = tmp_path / "near.jpg"
+    future = tmp_path / "future.jpg"
+    old_paths = [tmp_path / f"old-{index}.jpg" for index in range(20)]
+    visible_key = service._cache_key(visible, size)
+    near_key = service._cache_key(near, size)
+    old_keys = [service._cache_key(path, size) for path in old_paths]
+    pixmap = QPixmap(8, 8)
+
+    for key in (*old_keys, visible_key, near_key):
+        service._add_to_memory(key, pixmap)
+
+    assert service._memory_used_bytes < int(
+        policy.memory_limit_bytes * policy.l1_replacement_threshold_ratio
+    )
+
+    with patch.object(service, "_start_generation"):
+        service.reconcile_demand(
+            visible_paths=[visible],
+            prefetch_paths=[near, future],
+            size=size,
+            generation=1,
+            phase="slow",
+            intent="slow_continuous",
+        )
+
+    assert visible_key in service._memory_cache
+    assert near_key in service._memory_cache
+    assert all(key not in service._memory_cache for key in old_keys)
+
+
+def test_l1_rejects_stale_thumbnail_writes_outside_current_demand(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    service = ThumbnailCacheService(tmp_path / "thumbs")
+    service._max_active_jobs = 0
+    size = QSize(8, 8)
+    visible = tmp_path / "visible.jpg"
+    stale = tmp_path / "stale.jpg"
+    stale_key = service._cache_key(stale, size)
+
+    with patch.object(service, "_start_generation"):
+        service.reconcile_demand(
+            visible_paths=[visible],
+            prefetch_paths=[],
+            size=size,
+            generation=1,
+            phase="slow",
+            intent="slow_continuous",
+        )
+
+    service._add_to_memory(stale_key, QPixmap(8, 8))
+
+    assert stale_key not in service._memory_cache
+    assert stale_key not in service._memory_bytes
+
+
 def test_l2_reader_opens_once_without_exists_or_read_bytes(tmp_path: Path) -> None:
     service = ThumbnailCacheService(tmp_path / "thumbs")
     path = tmp_path / "photo.jpg"

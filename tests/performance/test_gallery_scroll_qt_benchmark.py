@@ -288,6 +288,54 @@ def test_windows_saturated_l1_pool_refreshes_for_slow_scroll(
     assert statistics.fmean(readiness) >= 0.99
 
 
+def test_windows_unsaturated_l1_pool_refreshes_for_slow_scroll(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    tile_bytes = 512 * 512 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(
+            platform="win32",
+            windows_probe=lambda: 16 * 1024**3,
+        ),
+        memory_limit_bytes=200 * tile_bytes,
+        l1_replacement_threshold_ratio=0.90,
+        l1_replacement_target_ratio=0.72,
+    )
+    cache_dir = tmp_path / "thumbs"
+    service = ThumbnailCacheService(cache_dir, runtime_policy=policy)
+    size = QSize(512, 512)
+    paths = [tmp_path / f"photo-{index:04d}.jpg" for index in range(120)]
+    stale_paths = [tmp_path / f"stale-{index:04d}.jpg" for index in range(20)]
+    _write_l2(cache_dir, paths, size)
+    stale_pixmap = QPixmap(512, 512)
+    stale_pixmap.fill(Qt.GlobalColor.darkGray)
+    for path in stale_paths:
+        service._add_to_memory(service._cache_key(path, size), stale_pixmap)
+
+    assert service._memory_used_bytes < int(
+        policy.memory_limit_bytes * policy.l1_replacement_threshold_ratio
+    )
+
+    visible = paths[20:30]
+    prefetch = paths[30:70]
+    service.reconcile_demand(
+        visible_paths=visible,
+        prefetch_paths=prefetch,
+        size=size,
+        generation=1,
+        phase="slow",
+        intent="slow_continuous",
+    )
+    _process_for(qapp, 0.8)
+    next_visible = paths[30:40]
+    readiness = [service.has_full_thumbnail(path, size) for path in next_visible]
+
+    service.shutdown()
+    assert readiness
+    assert statistics.fmean(readiness) >= 0.99
+
+
 def test_fast_round_trip_does_not_start_speculative_or_block_event_loop(
     qapp,
     tmp_path: Path,

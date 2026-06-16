@@ -225,6 +225,7 @@ class ThumbnailCacheService(QObject):
             else self._runtime_policy.memory_limit_bytes
         )
         self._pinned_keys: Set[str] = set()
+        self._current_l1_demand_keys: Set[str] | None = None
 
         self._pending_tasks: Set[str] = set()
         self._pending_generations: Dict[str, int] = {}
@@ -317,6 +318,7 @@ class ThumbnailCacheService(QObject):
         self._memory_bytes.clear()
         self._memory_used_bytes = 0
         self._pinned_keys.clear()
+        self._current_l1_demand_keys = None
         self._pending_tasks.clear()
         self._pending_generations.clear()
         self._queued_tasks.clear()
@@ -1565,6 +1567,23 @@ class ThumbnailCacheService(QObject):
         return known_key or thumbnail_cache_key(path, (512, 512))
 
     def _add_to_memory(self, key: str, pixmap: QPixmap):
+        if self._current_l1_demand_keys is not None and key not in (
+            self._current_l1_demand_keys | self._pinned_keys
+        ):
+            self._memory_used_bytes = max(
+                0,
+                self._memory_used_bytes - self._memory_bytes.pop(key, 0),
+            )
+            self._memory_cache.pop(key, None)
+            emit_perf_event(
+                "thumbnail_l1_write_discarded",
+                key=key,
+                reason="outside_current_demand",
+                memory_used_bytes=self._memory_used_bytes,
+                memory_limit_bytes=self._memory_limit_bytes,
+            )
+            return
+
         old_bytes = self._memory_bytes.pop(key, 0)
         self._memory_used_bytes = max(0, self._memory_used_bytes - old_bytes)
         bytes_per_pixel = max(1, (int(pixmap.depth()) + 7) // 8)
@@ -1586,7 +1605,7 @@ class ThumbnailCacheService(QObject):
         )
         self._evict_l1_until(
             self._memory_limit_bytes,
-            protected_keys={key},
+            protected_keys=self._l1_protected_keys({key}),
             reason_prefix="memory_pressure",
         )
 
@@ -1596,11 +1615,13 @@ class ThumbnailCacheService(QObject):
         desired_prefetch_keys: Set[str],
     ) -> None:
         desired_keys = desired_visible_keys | desired_prefetch_keys
+        self._current_l1_demand_keys = set(desired_keys) if desired_keys else None
         if not desired_keys or self._memory_limit_bytes <= 0:
             return
         for key in (*desired_visible_keys, *self._prefetch_key_order):
             if key in self._memory_cache:
                 self._memory_cache.move_to_end(key)
+        self._evict_l1_keys_outside_demand(desired_keys)
         threshold = max(
             1,
             int(
@@ -1649,6 +1670,29 @@ class ThumbnailCacheService(QObject):
                 memory_used_bytes=self._memory_used_bytes,
                 memory_limit_bytes=self._memory_limit_bytes,
             )
+
+    def _evict_l1_keys_outside_demand(self, desired_keys: Set[str]) -> None:
+        protected = self._l1_protected_keys(desired_keys)
+        stale_keys = [key for key in self._memory_cache if key not in protected]
+        for key in stale_keys:
+            self._memory_cache.pop(key, None)
+            self._memory_used_bytes = max(
+                0,
+                self._memory_used_bytes - self._memory_bytes.pop(key, 0),
+            )
+            emit_perf_event(
+                "thumbnail_l1_evicted",
+                key=key,
+                reason="demand_refresh_old_demand",
+                memory_used_bytes=self._memory_used_bytes,
+                memory_limit_bytes=self._memory_limit_bytes,
+            )
+
+    def _l1_protected_keys(self, keys: Set[str]) -> Set[str]:
+        protected = set(keys) | self._pinned_keys
+        if self._current_l1_demand_keys is not None:
+            protected |= self._current_l1_demand_keys
+        return protected
 
     def _select_l1_eviction_candidate(
         self,

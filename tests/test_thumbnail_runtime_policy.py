@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from iPhoto.infrastructure.services import thumbnail_runtime_policy
 from iPhoto.infrastructure.services.thumbnail_runtime_policy import (
     ThumbnailRuntimePolicy,
     resolve_physical_memory_bytes,
+    speculative_thread_background_mode,
 )
 
 
@@ -65,3 +69,51 @@ def test_explicit_memory_limit_overrides_dynamic_budget() -> None:
     )
 
     assert policy.memory_limit_bytes == 96 * 1024**2
+
+
+def test_windows_speculative_background_mode_sets_memory_priority(monkeypatch) -> None:
+    calls: list[tuple[str, int]] = []
+
+    class _Api:
+        argtypes = None
+        restype = None
+
+        def __init__(self, name, handler):
+            self._name = name
+            self._handler = handler
+
+        def __call__(self, *args):
+            return self._handler(*args)
+
+    def _set_thread_priority(_handle, priority):
+        calls.append(("priority", int(priority)))
+        return 1
+
+    def _set_thread_information(_handle, info_class, info, size):
+        priority = int(info._obj.MemoryPriority)
+        calls.append(("memory", priority))
+        assert int(info_class) == 0
+        assert int(size) > 0
+        return 1
+
+    kernel32 = SimpleNamespace(
+        GetCurrentThread=_Api("GetCurrentThread", lambda: 1234),
+        SetThreadPriority=_Api("SetThreadPriority", _set_thread_priority),
+        SetThreadInformation=_Api("SetThreadInformation", _set_thread_information),
+    )
+    monkeypatch.setattr(
+        thumbnail_runtime_policy.ctypes,
+        "windll",
+        SimpleNamespace(kernel32=kernel32),
+        raising=False,
+    )
+
+    with speculative_thread_background_mode("win32"):
+        pass
+
+    assert calls == [
+        ("priority", 0x00010000),
+        ("memory", 1),
+        ("memory", 5),
+        ("priority", 0x00020000),
+    ]

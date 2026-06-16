@@ -26,6 +26,10 @@ class _MemoryStatusEx(ctypes.Structure):
     ]
 
 
+class _MemoryPriorityInformation(ctypes.Structure):
+    _fields_ = [("MemoryPriority", ctypes.c_ulong)]
+
+
 def _windows_physical_memory_bytes() -> int:
     status = _MemoryStatusEx()
     status.dwLength = ctypes.sizeof(_MemoryStatusEx)
@@ -155,6 +159,7 @@ def speculative_thread_background_mode(platform: str) -> Iterator[None]:
     kernel32 = None
     thread_handle = None
     background_started = False
+    memory_priority_started = False
     try:
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         get_current_thread = kernel32.GetCurrentThread
@@ -167,9 +172,41 @@ def speculative_thread_background_mode(platform: str) -> Iterator[None]:
     except (AttributeError, OSError, ctypes.ArgumentError):
         kernel32 = None
         thread_handle = None
+    if kernel32 is not None and thread_handle is not None:
+        try:
+            set_thread_information = kernel32.SetThreadInformation
+            set_thread_information.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_ulong,
+            ]
+            set_thread_information.restype = ctypes.c_int
+            low_memory_priority = _MemoryPriorityInformation(1)
+            memory_priority_started = bool(
+                set_thread_information(
+                    thread_handle,
+                    0,
+                    ctypes.byref(low_memory_priority),
+                    ctypes.sizeof(low_memory_priority),
+                )
+            )
+        except (AttributeError, OSError, ctypes.ArgumentError):
+            memory_priority_started = False
     try:
         yield
     finally:
+        if kernel32 is not None and thread_handle is not None and memory_priority_started:
+            try:
+                normal_memory_priority = _MemoryPriorityInformation(5)
+                kernel32.SetThreadInformation(
+                    thread_handle,
+                    0,
+                    ctypes.byref(normal_memory_priority),
+                    ctypes.sizeof(normal_memory_priority),
+                )
+            except (AttributeError, OSError, ctypes.ArgumentError):
+                pass
         if kernel32 is not None and thread_handle is not None and background_started:
             try:
                 kernel32.SetThreadPriority(thread_handle, 0x00020000)
