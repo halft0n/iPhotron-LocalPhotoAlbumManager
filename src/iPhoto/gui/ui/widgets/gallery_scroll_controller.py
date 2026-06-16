@@ -216,18 +216,24 @@ class GalleryScrollController(QObject):
         self._screens_per_second = 0.0
         if self._intent == "continuous_burst":
             self._intent = "directional_dwell"
+        self._clear_angle_cadence()
         self.schedule_publish()
 
     def _publish_directional_dwell(self) -> None:
         if self._intent != "continuous_burst":
             self._intent = "directional_dwell"
             self._screens_per_second = 0.0
+            self._clear_angle_cadence()
             self.schedule_publish()
 
     def _publish_expired_direction(self) -> None:
         self._intent = "idle"
         self._screens_per_second = 0.0
+        self._clear_angle_cadence()
         self.schedule_publish()
+
+    def _clear_angle_cadence(self) -> None:
+        self._angle_intervals_ms.clear()
 
 
 __all__ = ["GalleryScrollController", "GalleryViewportDemand"]

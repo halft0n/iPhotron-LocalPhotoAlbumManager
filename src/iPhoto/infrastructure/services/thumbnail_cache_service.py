@@ -52,6 +52,14 @@ ThumbnailScrollIntent = Literal[
     "idle",
 ]
 
+_VISIBLE_QUEUE_WAIT_SAMPLE_TTL_SECONDS = 0.75
+_STRATEGIC_PREFETCH_CANCEL_REASONS = {
+    "all_prefetch_cancelled",
+    "demand_replaced",
+    "key_cancelled",
+    "shutdown",
+}
+
 
 class ThumbnailWorkerSignals(QObject):
     """Signals emitted by thumbnail generation workers."""
@@ -257,7 +265,7 @@ class ThumbnailCacheService(QObject):
         self._prefetch_backoff_until = 0.0
         self._current_phase: ThumbnailScrollPhase = "settled"
         self._current_intent: ThumbnailScrollIntent = "idle"
-        self._visible_queue_wait_ms: Deque[float] = deque(maxlen=16)
+        self._visible_queue_wait_ms: Deque[tuple[float, float]] = deque(maxlen=16)
         self._publish_visible: Deque[ThumbnailLoadResult] = deque()
         self._publish_predictive: Deque[ThumbnailLoadResult] = deque()
         self._publish_prefetch: Deque[ThumbnailLoadResult] = deque()
@@ -298,7 +306,7 @@ class ThumbnailCacheService(QObject):
         self._queued_tasks.clear()
         self._visible_queue.clear()
         self._visible_queued_at.clear()
-        self._cancel_all_prefetch()
+        self._cancel_all_prefetch("shutdown")
         self._prefetch_l2_miss_until.clear()
         self._clear_publish_queue()
         self._thread_pool.clear()
@@ -326,7 +334,7 @@ class ThumbnailCacheService(QObject):
         self._queued_tasks.clear()
         self._visible_queue.clear()
         self._visible_queued_at.clear()
-        self._cancel_all_prefetch()
+        self._cancel_all_prefetch("all_prefetch_cancelled")
         self._prefetch_l2_miss_until.clear()
         self._clear_publish_queue()
         self._failure_until.clear()
@@ -441,6 +449,10 @@ class ThumbnailCacheService(QObject):
     ) -> None:
         """Atomically replace foreground and best-effort thumbnail demand."""
 
+        previous_prefetch_blocked = self._motion_blocks_prefetch(
+            self._current_phase,
+            self._current_intent,
+        )
         self._current_phase = phase
         self._current_intent = intent or (
             "continuous_burst"
@@ -449,6 +461,11 @@ class ThumbnailCacheService(QObject):
             if phase == "slow"
             else "idle"
         )
+        if previous_prefetch_blocked and not self._motion_blocks_prefetch(
+            self._current_phase,
+            self._current_intent,
+        ):
+            self._recover_prefetch_after_motion_burst()
         visible = list(dict.fromkeys(Path(path) for path in visible_paths))
         visible_set = set(visible)
         candidate_by_path = {
@@ -584,7 +601,7 @@ class ThumbnailCacheService(QObject):
             self._visible_queued_at.pop(key, None)
         if drop_keys:
             self._visible_queue = deque(key for key in self._visible_queue if key not in drop_keys)
-        self._cancel_all_prefetch()
+        self._cancel_all_prefetch("all_prefetch_cancelled")
         self._discard_stale_staged_results(set(), set())
 
     def cancel_pending_except(self, paths: Set[Path], size: QSize) -> None:
@@ -647,7 +664,7 @@ class ThumbnailCacheService(QObject):
             queued_at = self._visible_queued_at.pop(key, monotonic_ms())
             queue_wait_ms = max(0.0, monotonic_ms() - queued_at)
             if self._prefetch_active_tasks > 0:
-                self._visible_queue_wait_ms.append(queue_wait_ms)
+                self._record_visible_queue_wait(queue_wait_ms)
             emit_perf_event(
                 "thumbnail_visible_dequeued",
                 path=spec.path,
@@ -780,7 +797,7 @@ class ThumbnailCacheService(QObject):
                 time.monotonic() + self._runtime_policy.prefetch_backoff_seconds,
             )
             return 0
-        queue_wait_p95 = self._p95(self._visible_queue_wait_ms)
+        queue_wait_p95 = self._p95(self._recent_visible_queue_wait_ms())
         if queue_wait_p95 > self._runtime_policy.visible_queue_wait_p95_ms:
             self._prefetch_backoff_until = max(
                 self._prefetch_backoff_until,
@@ -840,6 +857,35 @@ class ThumbnailCacheService(QObject):
             return 0.0
         return samples[min(len(samples) - 1, round((len(samples) - 1) * 0.95))]
 
+    @staticmethod
+    def _motion_blocks_prefetch(
+        phase: ThumbnailScrollPhase,
+        intent: ThumbnailScrollIntent,
+    ) -> bool:
+        return phase in ("medium", "fast") or intent == "continuous_burst"
+
+    def _recover_prefetch_after_motion_burst(self) -> None:
+        self._prefetch_backoff_until = 0.0
+        self._visible_queue_wait_ms.clear()
+
+    def _record_visible_queue_wait(self, queue_wait_ms: float) -> None:
+        self._visible_queue_wait_ms.append(
+            (time.monotonic(), max(0.0, float(queue_wait_ms)))
+        )
+
+    def _recent_visible_queue_wait_ms(self) -> list[float]:
+        now = time.monotonic()
+        fresh_samples: Deque[tuple[float, float]] = deque(
+            maxlen=self._visible_queue_wait_ms.maxlen
+        )
+        values: list[float] = []
+        for sampled_at, queue_wait_ms in self._visible_queue_wait_ms:
+            if now - sampled_at <= _VISIBLE_QUEUE_WAIT_SAMPLE_TTL_SECONDS:
+                fresh_samples.append((sampled_at, queue_wait_ms))
+                values.append(queue_wait_ms)
+        self._visible_queue_wait_ms = fresh_samples
+        return values
+
     def _replace_prefetch_demand(
         self,
         desired_prefetch_keys: Set[str],
@@ -878,8 +924,6 @@ class ThumbnailCacheService(QObject):
                 queued=queued_canceled,
                 active=active_canceled,
             )
-            if active_canceled:
-                self._record_prefetch_sample(0.0, cancelled=True)
 
     def _visible_miss_reason(self, key: str) -> str | None:
         if key in self._memory_cache:
@@ -936,7 +980,7 @@ class ThumbnailCacheService(QObject):
         if token is not None:
             token.cancel("key_cancelled")
 
-    def _cancel_all_prefetch(self) -> None:
+    def _cancel_all_prefetch(self, reason: str = "all_prefetch_cancelled") -> None:
         for key in self._prefetch_promoted_visible:
             self._pending_tasks.discard(key)
             self._pending_generations.pop(key, None)
@@ -948,9 +992,7 @@ class ThumbnailCacheService(QObject):
         self._prefetch_key_order.clear()
         self._prefetch_promoted_visible.clear()
         for token in self._prefetch_active_tokens.values():
-            token.cancel("all_prefetch_cancelled")
-        if self._prefetch_active_tokens:
-            self._record_prefetch_sample(0.0, cancelled=True)
+            token.cancel(reason)
 
     def _admit_prefetch_paths(
         self,
@@ -1769,7 +1811,8 @@ class ThumbnailCacheService(QObject):
         )
         if cancellation is not None:
             cancellation.l2_outcome = outcome
-        self._record_prefetch_sample(elapsed_ms, cancelled=outcome == "cancelled")
+        if self._should_record_prefetch_sample(cancellation, outcome):
+            self._record_prefetch_sample(elapsed_ms, cancelled=outcome == "cancelled")
         return image
 
     def _read_cached_thumbnail(
@@ -1841,6 +1884,15 @@ class ThumbnailCacheService(QObject):
         with self._prefetch_metrics_lock:
             self._prefetch_l2_elapsed_ms.append(max(0.0, elapsed_ms))
             self._prefetch_l2_cancelled.append(bool(cancelled))
+
+    @staticmethod
+    def _should_record_prefetch_sample(
+        cancellation: _CancellationToken | None,
+        outcome: str,
+    ) -> bool:
+        if outcome != "cancelled" or cancellation is None:
+            return True
+        return cancellation.cancel_reason not in _STRATEGIC_PREFETCH_CANCEL_REASONS
 
     def _load_or_render_thumbnail(
         self,

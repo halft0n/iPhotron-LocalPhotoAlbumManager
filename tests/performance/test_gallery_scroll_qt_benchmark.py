@@ -385,6 +385,53 @@ def test_fast_round_trip_does_not_start_speculative_or_block_event_loop(
     assert max(catchup_timings) <= 100.0
 
 
+def test_slow_scroll_recovers_full_prefetch_after_fast_round_trip(
+    qapp,
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 16 * 1024**3),
+        prefetch_sample_size=4,
+    )
+    cache_dir = tmp_path / "thumbs"
+    service = ThumbnailCacheService(cache_dir, runtime_policy=policy)
+    size = QSize(512, 512)
+    paths = [tmp_path / f"photo-{index:04d}.jpg" for index in range(160)]
+    _write_l2(cache_dir, paths, size)
+    view, _model, _delegate = _build_gallery_view(qapp, paths, service, size)
+
+    for angle_y in (-120, -120, 120, 120) * 4:
+        view._scroll_controller._screens_per_second = 10.0
+        _send_wheel(view, angle_y)
+        qapp.processEvents()
+
+    _process_for(qapp, 0.1)
+    view._scroll_controller._publish_idle_state()
+    _process_for(qapp, 0.1)
+
+    readiness: list[bool] = []
+    for index in range(6):
+        view._scroll_controller._last_input_at = time.monotonic() - 0.2
+        _send_wheel(view, -120)
+        _process_for(qapp, 0.35)
+        state = view._scroll_controller.viewport_state(len(paths))
+        assert state is not None
+        display_size = QSize(state.display_bucket, state.display_bucket)
+        visible_count = state.visible_last - state.visible_first + 1
+        next_paths = paths[
+            state.visible_last + 1 : state.visible_last + 1 + visible_count
+        ]
+        if index > 0:
+            readiness.extend(
+                service.has_full_thumbnail(path, display_size) for path in next_paths
+            )
+
+    view.close()
+    service.shutdown()
+    assert readiness
+    assert statistics.fmean(readiness) >= 0.95
+
+
 def test_high_dpi_publish_batches_stay_bounded(qapp, tmp_path: Path) -> None:
     policy = replace(
         ThumbnailRuntimePolicy.detect(platform="linux", sysconf=lambda _name: 4096 * 1024),

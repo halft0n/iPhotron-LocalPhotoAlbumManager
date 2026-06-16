@@ -925,7 +925,8 @@ def test_visible_queue_wait_immediately_pauses_predictive_work(tmp_path: Path) -
         visible_queue_wait_p95_ms=12.0,
     )
     service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
-    service._visible_queue_wait_ms.extend([14.0, 18.0])
+    service._record_visible_queue_wait(14.0)
+    service._record_visible_queue_wait(18.0)
 
     assert service._prefetch_concurrency_target() == 0
     assert service._prefetch_backoff_until > time.monotonic()
@@ -937,7 +938,8 @@ def test_light_visible_queue_keeps_one_predictive_lane(tmp_path: Path) -> None:
         visible_queue_wait_p95_ms=12.0,
     )
     service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
-    service._visible_queue_wait_ms.extend([2.0, 4.0])
+    service._record_visible_queue_wait(2.0)
+    service._record_visible_queue_wait(4.0)
     service._queued_tasks["visible"] = ThumbnailRequest(
         tmp_path / "visible.jpg",
         QSize(512, 512),
@@ -952,6 +954,96 @@ def test_light_visible_queue_keeps_one_predictive_lane(tmp_path: Path) -> None:
     )
 
     assert service._prefetch_concurrency_target() == 1
+
+
+def test_stale_visible_queue_wait_does_not_permanently_pause_predictive_work(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        visible_queue_wait_p95_ms=12.0,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    service._visible_queue_wait_ms.append((time.monotonic() - 60.0, 48.0))
+    service._prefetch_queued["predictive"] = ThumbnailRequest(
+        tmp_path / "predictive.jpg",
+        QSize(512, 512),
+        ThumbnailRequestKind.PREDICTIVE,
+        generation=1,
+    )
+
+    assert service._prefetch_concurrency_target() == 2
+    assert list(service._visible_queue_wait_ms) == []
+
+
+def test_slow_demand_after_burst_clears_backoff_and_drains_predictive_prefetch(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        prefetch_max_workers=2,
+        visible_queue_wait_p95_ms=12.0,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(512, 512)
+    visible = tmp_path / "visible.jpg"
+    ahead = tmp_path / "ahead.jpg"
+    service._current_phase = "fast"
+    service._current_intent = "continuous_burst"
+    service._prefetch_backoff_until = time.monotonic() + 60.0
+    service._record_visible_queue_wait(48.0)
+
+    with patch.object(service, "_start_generation") as start_generation:
+        service.reconcile_demand(
+            visible_paths=[visible],
+            prefetch_paths=[ahead],
+            prefetch_candidates=[
+                ThumbnailPrefetchCandidate(ahead, "ahead-l2-key", "predictive")
+            ],
+            size=size,
+            generation=2,
+            phase="slow",
+            intent="slow_continuous",
+        )
+
+    assert service._prefetch_backoff_until == 0.0
+    assert list(service._visible_queue_wait_ms) == []
+    assert any(
+        call.kwargs.get("kind") is ThumbnailRequestKind.PREDICTIVE
+        for call in start_generation.call_args_list
+    )
+
+
+def test_strategic_prefetch_cancellation_does_not_poison_cancel_rate(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        prefetch_sample_size=2,
+        prefetch_max_workers=2,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(512, 512)
+    path = tmp_path / "predictive.jpg"
+    token = _CancellationToken()
+    token.cancel("demand_replaced")
+
+    with patch.object(
+        service,
+        "_read_cached_thumbnail",
+        return_value=(None, "cancelled", 1.0),
+    ):
+        assert service._load_cached_thumbnail_only(path, size, token) is None
+
+    service._prefetch_queued["predictive"] = ThumbnailRequest(
+        path,
+        size,
+        ThumbnailRequestKind.PREDICTIVE,
+        generation=1,
+    )
+
+    assert list(service._prefetch_l2_cancelled) == []
+    assert service._prefetch_concurrency_target() == 2
 
 
 def test_direction_reversal_cancels_old_predictive_even_when_range_overlaps(
