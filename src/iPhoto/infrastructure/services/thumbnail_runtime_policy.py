@@ -95,8 +95,12 @@ class ThumbnailRuntimePolicy:
     prefetch_cancel_rate: float = 0.25
     prefetch_backoff_seconds: float = 2.0
     prefetch_miss_ttl_seconds: float = 2.0
+    predictive_miss_ttl_seconds: float = 0.5
     visible_queue_wait_p95_ms: float = 12.0
     far_speculative_workers: int = 1
+    recovery_predictive_workers: int = 2
+    recovery_publish_max_items: int = 4
+    recovery_publish_budget_ms: float = 5.0
     l1_replacement_threshold_ratio: float = 0.95
     l1_replacement_target_ratio: float = 0.88
 
@@ -117,18 +121,29 @@ class ThumbnailRuntimePolicy:
         )
         publish_max_items = 2
         publish_budget_ms = 3.0
+        recovery_predictive_workers = 2
+        recovery_publish_max_items = 4
+        recovery_publish_budget_ms = 5.0
+        far_speculative_workers = 1
         l1_replacement_threshold_ratio = 0.95
         l1_replacement_target_ratio = 0.88
         if platform_name.startswith("win"):
-            prefetch_workers = 4
+            prefetch_workers = 6
+            far_speculative_workers = 2
             publish_max_items = 4
             publish_budget_ms = 5.0
+            recovery_predictive_workers = 4
+            recovery_publish_max_items = 8
+            recovery_publish_budget_ms = 8.0
             l1_replacement_threshold_ratio = 0.90
             l1_replacement_target_ratio = 0.72
         elif platform_name.startswith("linux"):
             prefetch_workers = 3
             publish_max_items = 4
             publish_budget_ms = 5.0
+            recovery_predictive_workers = 3
+            recovery_publish_max_items = 6
+            recovery_publish_budget_ms = 6.0
         else:
             prefetch_workers = 1
         return cls(
@@ -142,7 +157,14 @@ class ThumbnailRuntimePolicy:
             prefetch_max_workers=prefetch_workers,
             publish_max_items=publish_max_items,
             publish_budget_ms=publish_budget_ms,
-            staging_limit=max(8, prefetch_workers * 4),
+            staging_limit=max(
+                24 if platform_name.startswith("win") else 8,
+                prefetch_workers * 4,
+            ),
+            far_speculative_workers=far_speculative_workers,
+            recovery_predictive_workers=recovery_predictive_workers,
+            recovery_publish_max_items=recovery_publish_max_items,
+            recovery_publish_budget_ms=recovery_publish_budget_ms,
             l1_replacement_threshold_ratio=l1_replacement_threshold_ratio,
             l1_replacement_target_ratio=l1_replacement_target_ratio,
         )

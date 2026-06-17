@@ -19,12 +19,13 @@ MICRO_QUERY_CHUNK = 256
 MICRO_MIN_WARM_ITEMS = 300
 MICRO_SLOW_SCREENS = 6
 MICRO_MEDIUM_SCREENS = 24
-FULL_PREFETCH_SLOW_AHEAD_SCREENS = 8
-FULL_PREFETCH_SLOW_BEHIND_SCREENS = 3
-FULL_PREFETCH_DWELL_AHEAD_SCREENS = 10
-FULL_PREFETCH_DWELL_BEHIND_SCREENS = 4
+FULL_PREFETCH_RECOVERY_SCREENS = 3
+FULL_PREFETCH_SLOW_AHEAD_SCREENS = 6
+FULL_PREFETCH_SLOW_BEHIND_SCREENS = 6
+FULL_PREFETCH_DWELL_AHEAD_SCREENS = 8
+FULL_PREFETCH_DWELL_BEHIND_SCREENS = 8
 FULL_PREFETCH_IDLE_SCREENS = 6
-FULL_PREFETCH_MEDIUM_AHEAD_SCREENS = 1
+FULL_PREFETCH_MEDIUM_AHEAD_SCREENS = 2
 
 SLOW_SCROLL_SCREENS_PER_SECOND = 2.0
 FAST_SCROLL_SCREENS_PER_SECOND = 8.0
@@ -50,6 +51,7 @@ class GalleryViewportDemand:
     prefetch_direction: int
     predicted_input_interval_ms: float | None
     display_bucket: int
+    recovery: bool
     full_prefetch_first: int
     full_prefetch_last: int
     warm_first: int
@@ -74,23 +76,19 @@ class GalleryViewportDemand:
         return self.warm_first, self.warm_last
 
     def iter_full_prefetch_rows(self) -> Iterator[int]:
-        """Yield nearby full-thumbnail rows, favoring the active scroll direction."""
+        """Yield full-thumbnail rows from the viewpoint outward.
+
+        The demand window is symmetric around the visible viewpoint. Direction only
+        breaks ties between equally-near rows; it does not allow one side to run
+        far ahead of the other.
+        """
 
         before = range(self.visible_first - 1, self.full_prefetch_first - 1, -1)
         after = range(self.visible_last + 1, self.full_prefetch_last + 1)
         if self.prefetch_direction:
             ahead = after if self.prefetch_direction > 0 else before
             behind = before if self.prefetch_direction > 0 else after
-            if self.intent == "directional_dwell":
-                ahead_iter = iter(ahead)
-                for _ in range(self.visible_last - self.visible_first + 1):
-                    try:
-                        yield next(ahead_iter)
-                    except StopIteration:
-                        break
-                yield from _interleave_iterators(ahead_iter, iter(behind), primary_count=3)
-                return
-            yield from _interleave_ranges(ahead, behind, primary_count=3)
+            yield from _interleave_ranges(ahead, behind, primary_count=1)
             return
         yield from _interleave_ranges(before, after, primary_count=1)
 
@@ -155,6 +153,7 @@ def build_viewport_demand(
     prefetch_direction: int | None = None,
     predicted_input_interval_ms: float | None = None,
     display_bucket: int = 512,
+    recovery: bool = False,
 ) -> GalleryViewportDemand:
     """Build bounded visible, full-prefetch, and micro-warm ranges."""
 
@@ -182,6 +181,7 @@ def build_viewport_demand(
         intent=intent,
         direction=direction,
         predicted_input_interval_ms=predicted_input_interval_ms,
+        recovery=bool(recovery),
     )
     full_prefetch_first, full_prefetch_last = _bounded_range(
         row_count,
@@ -223,6 +223,7 @@ def build_viewport_demand(
             else max(0.0, float(predicted_input_interval_ms))
         ),
         display_bucket=resolve_display_thumbnail_bucket(display_bucket),
+        recovery=bool(recovery),
         full_prefetch_first=full_prefetch_first,
         full_prefetch_last=full_prefetch_last,
         warm_first=warm_first,
@@ -247,14 +248,17 @@ def _full_prefetch_screens(
     intent: GalleryScrollIntent,
     direction: int,
     predicted_input_interval_ms: float | None,
+    recovery: bool,
 ) -> tuple[int, int]:
-    """Return lookbehind/lookahead full-thumbnail screens for the current intent."""
+    """Return symmetric full-thumbnail screens for the current viewpoint."""
 
     medium_slow_input = (
         phase == "medium"
         and predicted_input_interval_ms is not None
         and predicted_input_interval_ms > SCROLL_BURST_INTERVAL_MS
     )
+    if recovery:
+        return FULL_PREFETCH_RECOVERY_SCREENS, FULL_PREFETCH_RECOVERY_SCREENS
     if phase == "fast" or (intent == "continuous_burst" and not medium_slow_input):
         return 0, 0
 
@@ -262,22 +266,21 @@ def _full_prefetch_screens(
         return FULL_PREFETCH_IDLE_SCREENS, FULL_PREFETCH_IDLE_SCREENS
 
     if intent == "directional_dwell":
-        ahead = FULL_PREFETCH_DWELL_AHEAD_SCREENS
-        behind = FULL_PREFETCH_DWELL_BEHIND_SCREENS
+        screens = max(
+            FULL_PREFETCH_DWELL_AHEAD_SCREENS,
+            FULL_PREFETCH_DWELL_BEHIND_SCREENS,
+        )
     elif phase == "slow":
-        ahead = FULL_PREFETCH_SLOW_AHEAD_SCREENS
-        behind = FULL_PREFETCH_SLOW_BEHIND_SCREENS
+        screens = max(
+            FULL_PREFETCH_SLOW_AHEAD_SCREENS,
+            FULL_PREFETCH_SLOW_BEHIND_SCREENS,
+        )
     elif medium_slow_input:
-        ahead = FULL_PREFETCH_MEDIUM_AHEAD_SCREENS
-        behind = 0
+        screens = FULL_PREFETCH_MEDIUM_AHEAD_SCREENS
     else:
         return 0, 0
 
-    if direction < 0:
-        return ahead, behind
-    if direction > 0:
-        return behind, ahead
-    return behind, ahead
+    return screens, screens
 
 
 def _warm_window(
@@ -308,6 +311,7 @@ __all__ = [
     "DISPLAY_THUMBNAIL_BUCKETS",
     "MICRO_QUERY_CHUNK",
     "MICRO_WARM_LIMIT",
+    "FULL_PREFETCH_RECOVERY_SCREENS",
     "FULL_PREFETCH_SLOW_AHEAD_SCREENS",
     "FULL_PREFETCH_SLOW_BEHIND_SCREENS",
     "FULL_PREFETCH_DWELL_AHEAD_SCREENS",

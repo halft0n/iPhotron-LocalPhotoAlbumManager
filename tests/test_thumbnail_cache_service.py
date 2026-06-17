@@ -326,6 +326,9 @@ def test_prefetch_waits_while_visible_work_is_queued(tmp_path: Path) -> None:
         service.reconcile_demand(
             visible_paths=[visible_path],
             prefetch_paths=[prefetch_path],
+            prefetch_candidates=[
+                ThumbnailPrefetchCandidate(prefetch_path, "prefetch-key", "far_speculative")
+            ],
             size=size,
             generation=1,
         )
@@ -465,12 +468,42 @@ def test_prefetch_l2_miss_uses_short_retry_ttl(tmp_path: Path) -> None:
     )
 
     assert key in service._prefetch_l2_miss_until
+    assert service._prefetch_l2_miss_until[key] - time.monotonic() > 1.0
     assert key not in service._prefetch_pending
     service._prefetch_l2_miss_until[key] = time.monotonic() - 1.0
     service._queue_prefetch(
         ThumbnailRequest(path, size, ThumbnailRequestKind.PREFETCH, generation=2)
     )
     assert key in service._prefetch_pending
+
+
+def test_predictive_l2_miss_uses_shorter_retry_ttl(tmp_path: Path) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        predictive_miss_ttl_seconds=0.5,
+        prefetch_miss_ttl_seconds=2.0,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    path = tmp_path / "missing-predictive.jpg"
+    size = QSize(512, 512)
+    key = service._cache_key(path, size)
+
+    token = service._prefetch_active_tokens[key] = _CancellationToken()
+    token.l2_outcome = "miss"
+    service._prefetch_pending.add(key)
+    service._prefetch_active_tasks = 1
+    service._predictive_active_tasks = 1
+
+    service._handle_prefetch_failure(
+        path,
+        size,
+        "empty_render",
+        generation=1,
+        kind=ThumbnailRequestKind.PREDICTIVE,
+    )
+
+    ttl = service._prefetch_l2_miss_until[key] - time.monotonic()
+    assert 0.0 < ttl <= 0.75
 
 
 def test_prefetch_result_is_cached_without_thumbnail_ready_signal(tmp_path: Path, qapp) -> None:
@@ -954,6 +987,38 @@ def test_light_visible_queue_keeps_one_predictive_lane(tmp_path: Path) -> None:
     )
 
     assert service._prefetch_concurrency_target() == 1
+
+
+def test_windows_recovery_visible_queue_keeps_two_predictive_lanes(tmp_path: Path) -> None:
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        prefetch_max_workers=4,
+        recovery_predictive_workers=4,
+        visible_queue_wait_p95_ms=12.0,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    service._current_recovery = True
+    service._record_visible_queue_wait(2.0)
+    service._queued_tasks["visible"] = ThumbnailRequest(
+        tmp_path / "visible.jpg",
+        QSize(512, 512),
+        ThumbnailRequestKind.VISIBLE,
+        generation=1,
+    )
+    service._prefetch_queued["predictive-a"] = ThumbnailRequest(
+        tmp_path / "predictive-a.jpg",
+        QSize(512, 512),
+        ThumbnailRequestKind.PREDICTIVE,
+        generation=1,
+    )
+    service._prefetch_queued["predictive-b"] = ThumbnailRequest(
+        tmp_path / "predictive-b.jpg",
+        QSize(512, 512),
+        ThumbnailRequestKind.PREDICTIVE,
+        generation=1,
+    )
+
+    assert service._prefetch_concurrency_target() == 2
 
 
 def test_stale_visible_queue_wait_does_not_permanently_pause_predictive_work(

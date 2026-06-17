@@ -218,7 +218,11 @@ def test_slow_discrete_wheel_after_burst_settle_restores_full_prefetch(
         assert controller.handle_wheel(_WheelEvent(angle_y=-120))
 
     assert controller._intent == "continuous_burst"
-    controller._publish_idle_state()
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.20,
+    ):
+        controller._publish_idle_state()
     assert list(controller._angle_intervals_ms) == []
 
     with (
@@ -230,7 +234,52 @@ def test_slow_discrete_wheel_after_burst_settle_restores_full_prefetch(
     ):
         assert controller.handle_wheel(_WheelEvent(angle_y=-120))
 
-    demand = controller.viewport_state(500)
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.31,
+    ):
+        demand = controller.viewport_state(500)
     assert demand is not None
     assert demand.intent == "slow_continuous"
+    assert demand.recovery is True
+    assert list(demand.iter_full_prefetch_rows())
+
+
+def test_slow_discrete_wheel_immediately_after_burst_enters_recovery(
+    qapp: QApplication,
+) -> None:
+    grid = _make_grid(qapp)
+    controller = grid._scroll_controller
+    controller._last_input_at = 1.0
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.05,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    assert controller._intent == "continuous_burst"
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.30,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.31,
+    ):
+        demand = controller.viewport_state(500)
+
+    assert demand is not None
+    assert demand.intent == "slow_continuous"
+    assert demand.recovery is True
+    assert demand.full_prefetch_last > demand.visible_last
     assert list(demand.iter_full_prefetch_rows())

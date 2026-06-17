@@ -23,6 +23,8 @@ from iPhoto.gui.gallery_demand import (
 )
 from iPhoto.infrastructure.services.performance_events import emit_perf_event
 
+BURST_RECOVERY_SECONDS = 0.9
+
 
 class GalleryScrollController(QObject):
     """Keep wheel input responsive and publish at most one viewport state per event-loop turn."""
@@ -40,6 +42,7 @@ class GalleryScrollController(QObject):
         self._input_kind = "none"
         self._intent = "idle"
         self._last_input_at = 0.0
+        self._burst_recovery_until = 0.0
         self._angle_intervals_ms: deque[float] = deque(maxlen=4)
 
         self._apply_timer = QTimer(self)
@@ -73,7 +76,7 @@ class GalleryScrollController(QObject):
             # Trackpads already provide a precise physical-pixel stream.
             delta = -float(pixel_y)
             self._input_kind = "pixel"
-            self._intent = (
+            next_intent = (
                 "continuous_burst"
                 if self._screens_per_second >= 2.0
                 else "slow_continuous"
@@ -97,7 +100,7 @@ class GalleryScrollController(QObject):
             )
             if interval_ms is not None:
                 self._angle_intervals_ms.append(interval_ms)
-            self._intent = (
+            next_intent = (
                 "continuous_burst"
                 if (
                     self._screens_per_second >= FAST_SCROLL_SCREENS_PER_SECOND
@@ -110,10 +113,11 @@ class GalleryScrollController(QObject):
             )
             dwell_delay = (
                 SCROLL_SETTLED_TIMEOUT_MS
-                if self._intent == "continuous_burst"
+                if next_intent == "continuous_burst"
                 else SCROLL_DIRECTIONAL_DWELL_MS
             )
 
+        self._set_intent(next_intent, now=now)
         self._last_input_at = now
         self._dwell_timer.start(dwell_delay)
         self._direction_expiry_timer.start()
@@ -148,6 +152,7 @@ class GalleryScrollController(QObject):
             else None
         )
         self._generation += 1
+        recovery = self._is_in_burst_recovery(time.monotonic())
         demand = build_viewport_demand(
             generation=self._generation,
             row_count=row_count,
@@ -160,6 +165,7 @@ class GalleryScrollController(QObject):
             prefetch_direction=self._direction if self._intent != "idle" else 0,
             predicted_input_interval_ms=predicted_interval,
             display_bucket=display_bucket,
+            recovery=recovery,
         )
         emit_perf_event(
             "gallery_scroll_intent",
@@ -170,6 +176,7 @@ class GalleryScrollController(QObject):
             direction=demand.prefetch_direction,
             predicted_input_interval_ms=predicted_interval,
             display_bucket=display_bucket,
+            recovery=recovery,
         )
         return demand
 
@@ -198,11 +205,12 @@ class GalleryScrollController(QObject):
         self._screens_per_second += alpha * (instantaneous - self._screens_per_second)
         recent_wheel_input = now - self._last_input_at <= 0.05
         if self._input_kind == "pixel" and instantaneous >= 2.0:
-            self._intent = "continuous_burst"
+            self._set_intent("continuous_burst", now=now)
         elif not recent_wheel_input:
             self._input_kind = "scrollbar"
-            self._intent = (
-                "continuous_burst" if instantaneous >= 2.0 else "slow_continuous"
+            self._set_intent(
+                "continuous_burst" if instantaneous >= 2.0 else "slow_continuous",
+                now=now,
             )
             self._last_input_at = now
             self._dwell_timer.start(SCROLL_SETTLED_TIMEOUT_MS)
@@ -215,22 +223,40 @@ class GalleryScrollController(QObject):
     def _publish_idle_state(self) -> None:
         self._screens_per_second = 0.0
         if self._intent == "continuous_burst":
-            self._intent = "directional_dwell"
+            self._set_intent("directional_dwell", now=time.monotonic())
         self._clear_angle_cadence()
         self.schedule_publish()
 
     def _publish_directional_dwell(self) -> None:
         if self._intent != "continuous_burst":
-            self._intent = "directional_dwell"
+            self._set_intent("directional_dwell", now=time.monotonic())
             self._screens_per_second = 0.0
             self._clear_angle_cadence()
             self.schedule_publish()
 
     def _publish_expired_direction(self) -> None:
-        self._intent = "idle"
+        self._set_intent("idle", now=time.monotonic())
         self._screens_per_second = 0.0
         self._clear_angle_cadence()
         self.schedule_publish()
+
+    def _set_intent(self, intent: str, *, now: float) -> None:
+        previous = self._intent
+        self._intent = intent
+        if previous == "continuous_burst" and intent != "continuous_burst":
+            self._burst_recovery_until = max(
+                self._burst_recovery_until,
+                now + BURST_RECOVERY_SECONDS,
+            )
+        elif intent == "continuous_burst":
+            self._burst_recovery_until = 0.0
+
+    def _is_in_burst_recovery(self, now: float) -> bool:
+        return (
+            self._intent != "continuous_burst"
+            and self._burst_recovery_until > 0.0
+            and now <= self._burst_recovery_until
+        )
 
     def _clear_angle_cadence(self) -> None:
         self._angle_intervals_ms.clear()

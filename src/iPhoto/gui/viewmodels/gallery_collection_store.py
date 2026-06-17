@@ -611,6 +611,7 @@ class GalleryCollectionStore:
             return
 
         chunks = []
+        view_center = (demand.visible_first + demand.visible_last) / 2.0
         for chunk_first in range(demand.warm_first, demand.warm_last + 1, MICRO_QUERY_CHUNK):
             chunk_last = min(demand.warm_last, chunk_first + MICRO_QUERY_CHUNK - 1)
             if all(row in self._row_cache for row in range(chunk_first, chunk_last + 1)):
@@ -631,10 +632,17 @@ class GalleryCollectionStore:
                 priority = 1
             else:
                 priority = 2
-            direction_order = chunk_first if demand.direction >= 0 else -chunk_last
-            chunks.append((priority, direction_order, chunk_first, chunk_last))
+            chunk_center = (chunk_first + chunk_last) / 2.0
+            center_distance = abs(chunk_center - view_center)
+            if demand.direction > 0:
+                direction_tie = 0 if chunk_center >= view_center else 1
+            elif demand.direction < 0:
+                direction_tie = 0 if chunk_center <= view_center else 1
+            else:
+                direction_tie = 0
+            chunks.append((priority, center_distance, direction_tie, chunk_first, chunk_last))
 
-        for priority, _direction_order, chunk_first, chunk_last in sorted(chunks):
+        for priority, _distance, _direction_tie, chunk_first, chunk_last in sorted(chunks):
             self._request_async_chunk(
                 chunk_first,
                 chunk_last,

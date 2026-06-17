@@ -10,7 +10,7 @@ from iPhoto.infrastructure.services.thumbnail_runtime_policy import (
 )
 
 
-def test_windows_uses_global_memory_probe_and_four_predictive_workers() -> None:
+def test_windows_uses_global_memory_probe_and_aggressive_recovery_workers() -> None:
     policy = ThumbnailRuntimePolicy.detect(
         platform="win32",
         windows_probe=lambda: 16 * 1024**3,
@@ -18,9 +18,15 @@ def test_windows_uses_global_memory_probe_and_four_predictive_workers() -> None:
 
     assert policy.physical_memory_bytes == 16 * 1024**3
     assert policy.memory_limit_bytes == 1536 * 1024**2
-    assert policy.prefetch_max_workers == 4
+    assert policy.prefetch_max_workers == 6
+    assert policy.far_speculative_workers == 2
     assert policy.publish_max_items == 4
     assert policy.publish_budget_ms == 5.0
+    assert policy.staging_limit == 24
+    assert policy.recovery_predictive_workers == 4
+    assert policy.recovery_publish_max_items == 8
+    assert policy.recovery_publish_budget_ms == 8.0
+    assert policy.predictive_miss_ttl_seconds == 0.5
     assert policy.l1_replacement_threshold_ratio == 0.90
     assert policy.l1_replacement_target_ratio == 0.72
 

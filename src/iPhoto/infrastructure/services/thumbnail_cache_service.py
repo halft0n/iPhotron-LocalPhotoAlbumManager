@@ -265,6 +265,7 @@ class ThumbnailCacheService(QObject):
         self._prefetch_backoff_until = 0.0
         self._current_phase: ThumbnailScrollPhase = "settled"
         self._current_intent: ThumbnailScrollIntent = "idle"
+        self._current_recovery = False
         self._visible_queue_wait_ms: Deque[tuple[float, float]] = deque(maxlen=16)
         self._publish_visible: Deque[ThumbnailLoadResult] = deque()
         self._publish_predictive: Deque[ThumbnailLoadResult] = deque()
@@ -292,6 +293,9 @@ class ThumbnailCacheService(QObject):
             visible_workers=self._runtime_policy.visible_workers,
             prefetch_max_workers=self._runtime_policy.prefetch_max_workers,
             far_speculative_workers=self._runtime_policy.far_speculative_workers,
+            recovery_predictive_workers=self._runtime_policy.recovery_predictive_workers,
+            recovery_publish_max_items=self._runtime_policy.recovery_publish_max_items,
+            recovery_publish_budget_ms=self._runtime_policy.recovery_publish_budget_ms,
             l1_replacement_threshold_ratio=(
                 self._runtime_policy.l1_replacement_threshold_ratio
             ),
@@ -338,6 +342,7 @@ class ThumbnailCacheService(QObject):
         self._prefetch_l2_miss_until.clear()
         self._clear_publish_queue()
         self._failure_until.clear()
+        self._current_recovery = False
 
     def set_edit_service(self, edit_service: EditServicePort | None) -> None:
         """Bind the current edit surface used for thumbnail rendering."""
@@ -446,12 +451,14 @@ class ThumbnailCacheService(QObject):
         intent: ThumbnailScrollIntent | None = None,
         prefetch_candidates: Iterable[ThumbnailPrefetchCandidate] = (),
         l1_demand_complete: bool = True,
+        recovery: bool = False,
     ) -> None:
         """Atomically replace foreground and best-effort thumbnail demand."""
 
         previous_prefetch_blocked = self._motion_blocks_prefetch(
             self._current_phase,
             self._current_intent,
+            self._current_recovery,
         )
         self._current_phase = phase
         self._current_intent = intent or (
@@ -461,9 +468,11 @@ class ThumbnailCacheService(QObject):
             if phase == "slow"
             else "idle"
         )
+        self._current_recovery = bool(recovery)
         if previous_prefetch_blocked and not self._motion_blocks_prefetch(
             self._current_phase,
             self._current_intent,
+            self._current_recovery,
         ):
             self._recover_prefetch_after_motion_burst()
         visible = list(dict.fromkeys(Path(path) for path in visible_paths))
@@ -476,12 +485,16 @@ class ThumbnailCacheService(QObject):
             for path in dict.fromkeys(Path(path) for path in prefetch_paths)
             if Path(path) not in visible_set
         ]
-        if phase in ("medium", "fast") or self._current_intent == "continuous_burst":
+        if self._motion_blocks_prefetch(
+            self._current_phase,
+            self._current_intent,
+            self._current_recovery,
+        ):
             prefetch = []
         prefetch = self._admit_prefetch_paths(visible, prefetch, size)
         desired_visible_keys = {self._cache_key(path, size) for path in visible}
         desired_prefetch_keys = {self._cache_key(path, size) for path in prefetch}
-        predictive_limit = len(visible) if self._current_intent != "idle" else 0
+        predictive_limit = len(visible)
         desired_predictive_keys = {
             self._cache_key(path, size)
             for rank, path in enumerate(prefetch)
@@ -577,6 +590,7 @@ class ThumbnailCacheService(QObject):
                 phase=phase,
                 intent=self._current_intent,
                 l1_demand_complete=l1_demand_complete,
+                recovery=self._current_recovery,
             )
         self._drain_generation_queue()
 
@@ -688,8 +702,11 @@ class ThumbnailCacheService(QObject):
             or key in self._pending_tasks
             or miss_until > time.monotonic()
             or request.generation < self._current_generation
-            or self._current_phase in ("medium", "fast")
-            or self._current_intent == "continuous_burst"
+            or self._motion_blocks_prefetch(
+                self._current_phase,
+                self._current_intent,
+                self._current_recovery,
+            )
         ):
             return
         if key in self._prefetch_pending:
@@ -780,8 +797,11 @@ class ThumbnailCacheService(QObject):
     def _prefetch_concurrency_target(self) -> int:
         if (
             self._is_shutting_down
-            or self._current_phase in ("medium", "fast")
-            or self._current_intent == "continuous_burst"
+            or self._motion_blocks_prefetch(
+                self._current_phase,
+                self._current_intent,
+                self._current_recovery,
+            )
             or (
                 len(self._publish_predictive) + len(self._publish_prefetch)
                 >= self._runtime_policy.staging_limit
@@ -836,12 +856,29 @@ class ThumbnailCacheService(QObject):
                     queue_wait_p95 <= self._runtime_policy.visible_queue_wait_p95_ms
                     and publish_backlog < self._effective_publish_max_items() * 2
                 ):
+                    if self._current_recovery:
+                        return min(
+                            2,
+                            self._runtime_policy.recovery_predictive_workers,
+                            self._runtime_policy.prefetch_max_workers,
+                        )
                     return min(1, self._runtime_policy.prefetch_max_workers)
             return 0
         if predictive_queued or self._predictive_active_tasks:
-            initial = min(2, self._runtime_policy.prefetch_max_workers)
+            max_predictive = min(
+                self._runtime_policy.recovery_predictive_workers
+                if self._current_recovery
+                else self._runtime_policy.prefetch_max_workers,
+                self._runtime_policy.prefetch_max_workers,
+            )
+            initial = min(
+                self._runtime_policy.recovery_predictive_workers
+                if self._current_recovery
+                else 2,
+                self._runtime_policy.prefetch_max_workers,
+            )
             return (
-                self._runtime_policy.prefetch_max_workers
+                max_predictive
                 if (
                     predictive_queued > 0
                     and self._predictive_active_tasks >= initial
@@ -861,7 +898,10 @@ class ThumbnailCacheService(QObject):
     def _motion_blocks_prefetch(
         phase: ThumbnailScrollPhase,
         intent: ThumbnailScrollIntent,
+        recovery: bool = False,
     ) -> bool:
+        if recovery and intent != "continuous_burst":
+            return False
         return phase in ("medium", "fast") or intent == "continuous_burst"
 
     def _recover_prefetch_after_motion_burst(self) -> None:
@@ -1153,8 +1193,7 @@ class ThumbnailCacheService(QObject):
             fresh_visible = visible and result.generation >= self._current_generation
             current_prefetch = (
                 not visible
-                and self._current_phase in ("settled", "slow")
-                and self._current_intent != "continuous_burst"
+                and self._prefetch_results_allowed()
                 and key in self._prefetch_key_order
             )
             relevant = (
@@ -1242,15 +1281,13 @@ class ThumbnailCacheService(QObject):
             result
             for result in self._publish_prefetch
             if self._cache_key(result.path, result.size) in desired_prefetch_keys
-            and self._current_phase in ("settled", "slow")
-            and self._current_intent != "continuous_burst"
+            and self._prefetch_results_allowed()
         )
         self._publish_predictive = deque(
             result
             for result in self._publish_predictive
             if self._cache_key(result.path, result.size) in desired_prefetch_keys
-            and self._current_phase in ("settled", "slow")
-            and self._current_intent != "continuous_burst"
+            and self._prefetch_results_allowed()
         )
         self._publish_keys = {
             self._cache_key(result.path, result.size)
@@ -1265,14 +1302,25 @@ class ThumbnailCacheService(QObject):
         self._publish_keys.clear()
 
     def _effective_publish_max_items(self) -> int:
+        if self._current_recovery:
+            return max(1, self._runtime_policy.recovery_publish_max_items)
         if self._current_phase in ("settled", "slow") and self._current_intent != "continuous_burst":
             return max(1, self._runtime_policy.publish_max_items)
         return max(1, min(2, self._runtime_policy.publish_max_items))
 
     def _effective_publish_budget_ms(self) -> float:
+        if self._current_recovery:
+            return max(0.0, float(self._runtime_policy.recovery_publish_budget_ms))
         if self._current_phase in ("settled", "slow") and self._current_intent != "continuous_burst":
             return max(0.0, float(self._runtime_policy.publish_budget_ms))
         return max(0.0, min(3.0, float(self._runtime_policy.publish_budget_ms)))
+
+    def _prefetch_results_allowed(self) -> bool:
+        return not self._motion_blocks_prefetch(
+            self._current_phase,
+            self._current_intent,
+            self._current_recovery,
+        )
 
     def _start_generation(
         self,
@@ -1510,7 +1558,12 @@ class ThumbnailCacheService(QObject):
                 return
         if actual_reason == "miss":
             self._prefetch_l2_miss_until[key] = (
-                time.monotonic() + self._runtime_policy.prefetch_miss_ttl_seconds
+                time.monotonic()
+                + (
+                    self._runtime_policy.predictive_miss_ttl_seconds
+                    if kind is ThumbnailRequestKind.PREDICTIVE
+                    else self._runtime_policy.prefetch_miss_ttl_seconds
+                )
             )
         emit_perf_event(
             "thumbnail_prefetch_skipped",

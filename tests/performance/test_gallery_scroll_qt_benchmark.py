@@ -385,7 +385,7 @@ def test_fast_round_trip_does_not_start_speculative_or_block_event_loop(
     assert max(catchup_timings) <= 100.0
 
 
-def test_slow_scroll_recovers_full_prefetch_after_fast_round_trip(
+def test_slow_scroll_recovers_symmetric_full_prefetch_after_fast_round_trip(
     qapp,
     tmp_path: Path,
 ) -> None:
@@ -418,12 +418,15 @@ def test_slow_scroll_recovers_full_prefetch_after_fast_round_trip(
         assert state is not None
         display_size = QSize(state.display_bucket, state.display_bucket)
         visible_count = state.visible_last - state.visible_first + 1
-        next_paths = paths[
-            state.visible_last + 1 : state.visible_last + 1 + visible_count
-        ]
+        near_rows = [
+            row
+            for row in state.iter_full_prefetch_rows()
+            if 0 <= row < len(paths)
+        ][:visible_count]
+        near_paths = [paths[row] for row in near_rows]
         if index > 0:
             readiness.extend(
-                service.has_full_thumbnail(path, display_size) for path in next_paths
+                service.has_full_thumbnail(path, display_size) for path in near_paths
             )
 
     view.close()

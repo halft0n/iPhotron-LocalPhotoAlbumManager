@@ -348,6 +348,7 @@ def test_fast_viewport_warms_micro_and_still_requests_visible_full(
         intent="continuous_burst",
         prefetch_candidates=(),
         l1_demand_complete=False,
+        recovery=False,
     )
     assert demand.phase == "fast"
     assert demand.full_prefetch_range == demand.visible_range
@@ -420,6 +421,7 @@ def test_settled_viewport_requests_visible_and_ordered_prefetch_full(
         intent="idle",
         prefetch_candidates=(),
         l1_demand_complete=False,
+        recovery=False,
     )
     assert demand.phase == "settled"
     assert demand.full_prefetch_first < demand.visible_first

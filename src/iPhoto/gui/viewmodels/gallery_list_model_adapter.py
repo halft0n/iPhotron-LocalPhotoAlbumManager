@@ -663,11 +663,7 @@ class GalleryListModelAdapter(QAbstractListModel):
         prefetched_rows = dict(self._store.cached_rows(*demand.full_prefetch_range))
         visible_count = demand.visible_last - demand.visible_first + 1
         ordered_prefetch_rows = tuple(demand.iter_full_prefetch_rows())
-        predictive_rows = (
-            frozenset(ordered_prefetch_rows[:visible_count])
-            if demand.prefetch_direction
-            else frozenset()
-        )
+        predictive_rows = frozenset(ordered_prefetch_rows[:visible_count])
         cached_candidates = self._cached_thumbnail_candidates(
             ordered_prefetch_rows,
             prefetched_rows,
@@ -750,12 +746,12 @@ class GalleryListModelAdapter(QAbstractListModel):
             intent=demand.intent,
             prefetch_candidates=tuple(candidate_by_path.values()),
             l1_demand_complete=l1_demand_complete,
+            recovery=demand.recovery,
         )
 
     def _request_thumbnail_hints(self, demand: GalleryViewportDemand) -> None:
         if demand.intent == "continuous_burst":
             self._thumbnail_hint_request_id += 1
-            self._thumbnail_hint_loader.cancel_pending()
             return
         query = self._store.current_query()
         root = self._store.active_root() or self._store.library_root()
@@ -770,11 +766,7 @@ class GalleryListModelAdapter(QAbstractListModel):
         ):
             return
         visible_count = demand.visible_last - demand.visible_first + 1
-        predictive_rows = (
-            frozenset(ordered_rows[:visible_count])
-            if demand.prefetch_direction
-            else frozenset()
-        )
+        predictive_rows = frozenset(ordered_rows[:visible_count])
         emit_perf_event(
             "gallery_thumbnail_hint_requested",
             generation=demand.generation,
