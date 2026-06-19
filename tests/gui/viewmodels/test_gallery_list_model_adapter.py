@@ -511,7 +511,7 @@ def test_full_thumbnail_snapshot_separates_guard_from_speculation(
     )
     prefetch_rows = [
         (row, _make_dto(abs_path=Path(f"/library/prefetch-{row}.jpg")))
-        for row in tuple(demand.iter_full_prefetch_rows())[:6]
+        for row in demand.iter_full_prefetch_rows()
     ]
     mock_store.cached_rows.side_effect = [
         visible_rows,
@@ -523,6 +523,9 @@ def test_full_thumbnail_snapshot_separates_guard_from_speculation(
 
     snapshot = mock_thumb_service.reconcile_demand.call_args.args[0]
     assert len(snapshot.guard_paths) == len(tuple(demand.iter_full_guard_rows()))
+    assert len(snapshot.speculative_paths) == len(
+        tuple(demand.iter_full_speculative_rows())
+    )
     assert set(snapshot.guard_paths).isdisjoint(snapshot.speculative_paths)
 
 
