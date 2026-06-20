@@ -1215,7 +1215,11 @@ def test_staging_publisher_prioritizes_visible_and_honors_item_budget(
     tmp_path: Path,
     qapp,
 ) -> None:
-    service = ThumbnailCacheService(tmp_path / "thumbs")
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="darwin", sysconf=lambda _name: 4096),
+        publish_max_items=2,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
     size = QSize(8, 8)
     visible = tmp_path / "visible.jpg"
     first = tmp_path / "first.jpg"
