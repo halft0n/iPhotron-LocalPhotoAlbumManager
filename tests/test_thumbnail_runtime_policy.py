@@ -31,6 +31,11 @@ def test_windows_uses_bounded_budget_and_dedicated_guard_workers() -> None:
     assert policy.guard_miss_ttl_seconds == 0.5
     assert policy.l1_replacement_threshold_ratio == 0.90
     assert policy.l1_replacement_target_ratio == 0.72
+    assert policy.pixmap_pool_target_ratio == 0.72
+    assert policy.urgent_pipeline_budget_ratio == 0.20
+    assert policy.far_pipeline_budget_ratio == 0.05
+    assert policy.low_memory_release_max_items == 2
+    assert policy.low_memory_release_budget_ms == 1.0
 
 
 def test_linux_uses_sysconf_and_two_guard_workers() -> None:

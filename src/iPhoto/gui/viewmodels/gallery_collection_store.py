@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Protocol
@@ -666,7 +667,7 @@ class GalleryCollectionStore:
                 demand_generation=demand.generation,
                 priority=priority,
             )
-        self._trim_row_cache()
+        self.trim_row_cache_step()
         emit_perf_event(
             "gallery_viewport_demand",
             generation=demand.generation,
@@ -719,7 +720,7 @@ class GalleryCollectionStore:
             self._row_cache[row] = dto
             self._row_cache.move_to_end(row)
         self._total_count = max(0, int(result.total_count))
-        self._trim_row_cache()
+        self.trim_row_cache_step()
         self._window_range = self._cache_window_range()
         loaded_rows = sorted(self._pending_row_loads.intersection(self._row_cache))
         completed_pending_rows = {
@@ -857,9 +858,23 @@ class GalleryCollectionStore:
             return False
         return self._warm_range[0] <= row <= self._warm_range[1]
 
-    def _trim_row_cache(self) -> None:
+    def row_cache_needs_trim(self) -> bool:
         max_items = MICRO_WARM_LIMIT + (1 if self._pinned_row is not None else 0)
-        while len(self._row_cache) > max_items:
+        return len(self._row_cache) > max_items
+
+    def trim_row_cache_step(
+        self,
+        *,
+        max_items: int = 32,
+        budget_ms: float = 1.0,
+    ) -> bool:
+        """Retire stale micro DTOs in bounded GUI-thread slices."""
+
+        started = time.perf_counter()
+        evicted = 0
+        item_budget = max(1, int(max_items))
+        cache_limit = MICRO_WARM_LIMIT + (1 if self._pinned_row is not None else 0)
+        while len(self._row_cache) > cache_limit:
             evict = next(
                 (
                     row
@@ -876,6 +891,27 @@ class GalleryCollectionStore:
             if evict is None:
                 break
             self._row_cache.pop(evict, None)
+            evicted += 1
+            if evicted >= item_budget:
+                break
+            if (time.perf_counter() - started) * 1000.0 >= max(0.0, budget_ms):
+                break
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if evicted:
+            emit_perf_event(
+                "gallery_micro_trim",
+                evicted=evicted,
+                elapsed_ms=round(elapsed_ms, 3),
+                cached_count=len(self._row_cache),
+                remaining=max(0, len(self._row_cache) - cache_limit),
+            )
+        return len(self._row_cache) > cache_limit
+
+    def _trim_row_cache(self) -> None:
+        """Compatibility helper for callers/tests that require an eager trim."""
+
+        while self.trim_row_cache_step():
+            pass
 
     def _cache_window_range(self) -> tuple[int, int] | None:
         if not self._row_cache or self._total_count <= 0:

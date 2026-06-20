@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("PySide6", reason="PySide6 is required for thumbnail tests", exc_type=ImportError)
 from PIL import Image
 from PySide6.QtCore import QFile, QSize
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPixmap
 
 from iPhoto.infrastructure.services.thumbnail_cache_keys import thumbnail_cache_file
 from iPhoto.infrastructure.services.thumbnail_cache_service import (
@@ -716,7 +716,7 @@ def test_windows_l1_refresh_replaces_old_pages_when_saturated(
     )
 
 
-def test_windows_l1_refresh_replaces_old_pages_before_saturation(
+def test_windows_l1_pool_retains_cold_slots_before_saturation(
     tmp_path: Path,
     qapp,
 ) -> None:
@@ -757,15 +757,12 @@ def test_windows_l1_refresh_replaces_old_pages_before_saturation(
             )
         )
 
-    while service._has_stale_l1_entries():
-        service._drain_l1_evictions()
-
     assert visible_key in service._memory_cache
     assert near_key in service._memory_cache
-    assert all(key not in service._memory_cache for key in old_keys)
+    assert all(key in service._memory_cache for key in old_keys)
 
 
-def test_new_demand_evicts_preheated_old_viewpoint_in_bounded_batches(
+def test_new_demand_retains_preheated_old_viewpoint_as_reusable_slots(
     tmp_path: Path,
     qapp,
 ) -> None:
@@ -789,10 +786,10 @@ def test_new_demand_evicts_preheated_old_viewpoint_in_bounded_batches(
             intent="slow_continuous",
         )
 
-    assert all(key not in service._memory_cache for key in next_keys)
+    assert all(key in service._memory_cache for key in next_keys)
 
 
-def test_complete_l1_demand_prunes_preheated_old_viewpoint(
+def test_complete_l1_demand_keeps_cold_slots_until_rebind(
     tmp_path: Path,
     qapp,
 ) -> None:
@@ -824,7 +821,7 @@ def test_complete_l1_demand_prunes_preheated_old_viewpoint(
 
     assert visible_key in service._memory_cache
     assert near_key in service._memory_cache
-    assert all(key not in service._memory_cache for key in old_keys)
+    assert all(key in service._memory_cache for key in old_keys)
 
 
 def test_l1_rejects_stale_thumbnail_writes_outside_current_demand(
@@ -1513,7 +1510,7 @@ def test_prefetch_admission_respects_observed_pixmap_budget(
     size = QSize(8, 8)
     visible = [tmp_path / "visible.jpg"]
     prefetch = [tmp_path / f"{index}.jpg" for index in range(4)]
-    service._memory_limit_bytes = 2 * 8 * 8 * 4
+    service._memory_limit_bytes = 3 * 8 * 8 * 4
     service._add_to_memory(service._cache_key(visible[0], size), QPixmap(8, 8))
 
     guard, speculative = service._admit_prefetch_paths(visible, [], prefetch, size)
@@ -1530,7 +1527,7 @@ def test_prefetch_admission_keeps_nearest_guard_within_hard_budget(
     size = QSize(8, 8)
     visible = [tmp_path / "visible.jpg"]
     prefetch = [tmp_path / f"{index}.jpg" for index in range(4)]
-    service._memory_limit_bytes = 2 * 8 * 8 * 4
+    service._memory_limit_bytes = 3 * 8 * 8 * 4
     service._add_to_memory(service._cache_key(visible[0], size), QPixmap(8, 8))
 
     guard, speculative = service._admit_prefetch_paths(
@@ -1568,7 +1565,7 @@ def test_far_staging_does_not_block_guard_staging(tmp_path: Path) -> None:
     assert service._publish_guard[0].path == guard
 
 
-def test_staging_bytes_never_exceed_ten_percent_of_total_budget(
+def test_urgent_staging_uses_dedicated_pipeline_budget(
     tmp_path: Path,
 ) -> None:
     tile_bytes = 8 * 8 * 4
@@ -1600,7 +1597,9 @@ def test_staging_bytes_never_exceed_ten_percent_of_total_budget(
         )
     )
 
-    assert service.memory_snapshot().staging_bytes <= policy.memory_limit_bytes // 10
+    assert service.memory_snapshot().urgent_staging_bytes <= int(
+        policy.memory_limit_bytes * policy.urgent_pipeline_budget_ratio
+    )
     assert service.memory_snapshot().live_bytes <= policy.memory_limit_bytes
 
 
@@ -1643,7 +1642,11 @@ def test_windows_low_memory_pressure_clears_far_queue_and_staging(
     service._prefetch_queue.extend([far_key, guard_key])
     service._stage_result(ThumbnailLoadResult(far, size, image, 1, ThumbnailRequestKind.PREFETCH))
 
-    service._apply_low_memory_pressure_if_needed()
+    with patch(
+        "iPhoto.infrastructure.services.thumbnail_cache_service.windows_low_memory_resource_active",
+        return_value=True,
+    ):
+        service._apply_low_memory_pressure_if_needed()
 
     assert service._low_memory_pressure is True
     assert far_key not in service._prefetch_queued
@@ -1686,3 +1689,103 @@ def test_visible_staging_backpressure_pauses_new_foreground_workers(tmp_path: Pa
         service._drain_generation_queue()
 
     start_generation.assert_not_called()
+
+
+def test_pixmap_pool_rebinds_cold_slot_without_new_allocation(
+    tmp_path: Path,
+    qapp,
+) -> None:
+    tile_bytes = 8 * 8 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        memory_limit_bytes=4 * tile_bytes,
+        pixmap_pool_target_ratio=0.50,
+        urgent_pipeline_budget_ratio=0.40,
+        far_pipeline_budget_ratio=0.05,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(8, 8)
+    visible = tmp_path / "visible.jpg"
+    cold = tmp_path / "cold.jpg"
+    incoming = tmp_path / "incoming.jpg"
+    visible_key = service._cache_key(visible, size)
+    cold_key = service._cache_key(cold, size)
+    incoming_key = service._cache_key(incoming, size)
+
+    red = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    red.fill(QColor("red"))
+    green = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    green.fill(QColor("green"))
+    blue = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    blue.fill(QColor("blue"))
+    assert service._store_image_in_l1(visible_key, red)
+    assert service._store_image_in_l1(cold_key, green)
+    cold_slot = service._memory_cache[cold_key]
+
+    service._pinned_keys = {visible_key}
+    service._current_l1_demand_keys = {visible_key, incoming_key}
+    assert service._store_image_in_l1(incoming_key, blue)
+
+    snapshot = service.memory_snapshot()
+    assert visible_key in service._memory_cache
+    assert cold_key not in service._memory_cache
+    assert service._memory_cache[incoming_key] is cold_slot
+    assert snapshot.slot_allocations == 2
+    assert snapshot.slot_reuses == 1
+    assert snapshot.slot_count == 2
+    assert service._memory_cache[incoming_key].toImage().pixelColor(0, 0).blue() > 200
+
+
+def test_guard_reservation_transfers_to_staging_without_double_accounting(
+    tmp_path: Path,
+) -> None:
+    tile_bytes = 8 * 8 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        memory_limit_bytes=10 * tile_bytes,
+        pixmap_pool_target_ratio=0.50,
+        urgent_pipeline_budget_ratio=0.40,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    path = tmp_path / "guard.jpg"
+    size = QSize(8, 8)
+    key = service._cache_key(path, size)
+    image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    service._active_decode_reservations[key] = tile_bytes
+    service._active_decode_kinds[key] = ThumbnailRequestKind.GUARD
+
+    service._stage_result(
+        ThumbnailLoadResult(path, size, image, 1, ThumbnailRequestKind.GUARD),
+        reservation_key=key,
+    )
+
+    snapshot = service.memory_snapshot()
+    assert key not in service._active_decode_reservations
+    assert key not in service._active_decode_kinds
+    assert snapshot.active_reservation_bytes == 0
+    assert snapshot.urgent_staging_bytes == tile_bytes
+    assert snapshot.live_bytes == tile_bytes
+
+
+def test_urgent_guard_staging_is_not_dropped_by_far_item_limit(tmp_path: Path) -> None:
+    tile_bytes = 8 * 8 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(platform="win32", windows_probe=lambda: 8 * 1024**3),
+        memory_limit_bytes=20 * tile_bytes,
+        pixmap_pool_target_ratio=0.50,
+        urgent_pipeline_budget_ratio=0.40,
+        guard_staging_limit=2,
+        staging_limit=2,
+    )
+    service = ThumbnailCacheService(tmp_path / "thumbs", runtime_policy=policy)
+    size = QSize(8, 8)
+    image = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+
+    for index in range(4):
+        path = tmp_path / f"guard-{index}.jpg"
+        service._stage_result(
+            ThumbnailLoadResult(path, size, image, 1, ThumbnailRequestKind.GUARD)
+        )
+
+    assert len(service._publish_guard) == 4
+    assert service.memory_snapshot().urgent_staging_bytes == 4 * tile_bytes

@@ -131,6 +131,11 @@ class ThumbnailRuntimePolicy:
     windows_low_memory_probe_interval_ms: int = 250
     l1_replacement_threshold_ratio: float = 0.95
     l1_replacement_target_ratio: float = 0.88
+    pixmap_pool_target_ratio: float = 0.88
+    urgent_pipeline_budget_ratio: float = 0.09
+    far_pipeline_budget_ratio: float = 0.03
+    low_memory_release_max_items: int = 2
+    low_memory_release_budget_ms: float = 1.0
 
     @classmethod
     def detect(
@@ -157,6 +162,9 @@ class ThumbnailRuntimePolicy:
         far_speculative_workers = 1
         l1_replacement_threshold_ratio = 0.95
         l1_replacement_target_ratio = 0.88
+        pixmap_pool_target_ratio = 0.88
+        urgent_pipeline_budget_ratio = 0.09
+        far_pipeline_budget_ratio = 0.03
         if platform_name.startswith("win"):
             prefetch_workers = 4
             publish_max_items = 4
@@ -168,6 +176,9 @@ class ThumbnailRuntimePolicy:
             windows_low_memory_target_ratio = 0.60
             l1_replacement_threshold_ratio = 0.90
             l1_replacement_target_ratio = 0.72
+            pixmap_pool_target_ratio = 0.72
+            urgent_pipeline_budget_ratio = 0.20
+            far_pipeline_budget_ratio = 0.05
         elif platform_name.startswith("linux"):
             prefetch_workers = 2
             publish_max_items = 4
@@ -201,6 +212,9 @@ class ThumbnailRuntimePolicy:
             windows_low_memory_target_ratio=windows_low_memory_target_ratio,
             l1_replacement_threshold_ratio=l1_replacement_threshold_ratio,
             l1_replacement_target_ratio=l1_replacement_target_ratio,
+            pixmap_pool_target_ratio=pixmap_pool_target_ratio,
+            urgent_pipeline_budget_ratio=urgent_pipeline_budget_ratio,
+            far_pipeline_budget_ratio=far_pipeline_budget_ratio,
         )
 
 

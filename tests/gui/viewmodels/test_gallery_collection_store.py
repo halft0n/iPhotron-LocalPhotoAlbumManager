@@ -630,6 +630,30 @@ def test_async_window_results_merge_into_sparse_cache() -> None:
     assert len(store._row_cache) <= MICRO_WARM_LIMIT
 
 
+def test_micro_row_cache_trim_is_bounded_and_preserves_warm_rows() -> None:
+    store = GalleryCollectionStore(_FakeQueryService([]), library_root=Path("."))
+    store._total_count = MICRO_WARM_LIMIT + 100
+    store._warm_range = (MICRO_WARM_LIMIT - 100, MICRO_WARM_LIMIT + 99)
+    dto = scan_row_to_dto(
+        Path("."),
+        "asset.jpg",
+        {"id": "asset", "rel": "asset.jpg", "media_type": 0},
+    )
+    assert dto is not None
+    for row in range(MICRO_WARM_LIMIT + 64):
+        store._row_cache[row] = dto
+
+    needs_more = store.trim_row_cache_step(max_items=32, budget_ms=100.0)
+
+    assert needs_more is True
+    assert len(store._row_cache) == MICRO_WARM_LIMIT + 32
+    assert all(row in store._row_cache for row in range(MICRO_WARM_LIMIT, MICRO_WARM_LIMIT + 64))
+
+    while store.trim_row_cache_step(max_items=32, budget_ms=100.0):
+        pass
+    assert len(store._row_cache) == MICRO_WARM_LIMIT
+
+
 def test_async_window_results_from_same_revision_batch_all_merge() -> None:
     service = _FakeQueryService([])
     requests: list[GalleryWindowRequest] = []

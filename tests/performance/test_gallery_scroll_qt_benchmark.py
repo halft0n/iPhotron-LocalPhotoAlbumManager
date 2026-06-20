@@ -274,7 +274,7 @@ def test_windows_saturated_l1_pool_refreshes_for_slow_scroll(
             platform="win32",
             windows_probe=lambda: 16 * 1024**3,
         ),
-        memory_limit_bytes=20 * tile_bytes,
+        memory_limit_bytes=40 * tile_bytes,
         l1_replacement_threshold_ratio=0.90,
         l1_replacement_target_ratio=0.72,
     )
@@ -282,7 +282,7 @@ def test_windows_saturated_l1_pool_refreshes_for_slow_scroll(
     service = ThumbnailCacheService(cache_dir, runtime_policy=policy)
     size = QSize(512, 512)
     paths = [tmp_path / f"photo-{index:04d}.jpg" for index in range(120)]
-    stale_paths = [tmp_path / f"stale-{index:04d}.jpg" for index in range(20)]
+    stale_paths = [tmp_path / f"stale-{index:04d}.jpg" for index in range(40)]
     _write_l2(cache_dir, paths, size)
     stale_pixmap = QPixmap(512, 512)
     stale_pixmap.fill(Qt.GlobalColor.darkGray)
@@ -313,6 +313,73 @@ def test_windows_saturated_l1_pool_refreshes_for_slow_scroll(
     service.shutdown()
     assert readiness
     assert statistics.fmean(readiness) >= 0.99
+
+
+@pytest.mark.parametrize("cadence_ms", [150, 200, 250])
+def test_windows_slow_scroll_soak_is_history_independent_after_pool_saturation(
+    qapp,
+    tmp_path: Path,
+    cadence_ms: int,
+) -> None:
+    tile_bytes = 512 * 512 * 4
+    policy = replace(
+        ThumbnailRuntimePolicy.detect(
+            platform="win32",
+            windows_probe=lambda: 16 * 1024**3,
+        ),
+        memory_limit_bytes=40 * tile_bytes,
+        pixmap_pool_target_ratio=0.72,
+        urgent_pipeline_budget_ratio=0.20,
+        far_pipeline_budget_ratio=0.05,
+    )
+    cache_dir = tmp_path / "thumbs"
+    service = ThumbnailCacheService(cache_dir, runtime_policy=policy)
+    size = QSize(512, 512)
+    paths = [tmp_path / f"photo-{index:04d}.jpg" for index in range(180)]
+    _write_l2(cache_dir, paths, size)
+    original_reader = service._read_cached_thumbnail
+
+    def delayed_reader(*args, **kwargs):
+        if kwargs.get("tier") == "L2_prefetch":
+            time.sleep(0.025)
+        return original_reader(*args, **kwargs)
+
+    readiness_by_generation: list[float] = []
+    allocations_after_warmup: int | None = None
+    with patch.object(service, "_read_cached_thumbnail", side_effect=delayed_reader):
+        for generation, first in enumerate(range(10, 140, 10), start=1):
+            visible = paths[first : first + 10]
+            guard = paths[first + 10 : first + 20]
+            speculative = paths[first + 20 : first + 40]
+            service.reconcile_demand(
+                ThumbnailDemandSnapshot(
+                    revision=generation,
+                    size=size,
+                    visible_paths=tuple(visible),
+                    guard_paths=tuple(guard),
+                    speculative_paths=tuple(speculative),
+                    phase="slow",
+                    intent="slow_continuous",
+                )
+            )
+            _process_for(qapp, cadence_ms / 1000.0)
+            readiness_by_generation.append(
+                statistics.fmean(
+                    service.has_full_thumbnail(path, size) for path in guard
+                )
+            )
+            if generation == 3:
+                allocations_after_warmup = service.memory_snapshot().slot_allocations
+
+    snapshot = service.memory_snapshot()
+    service.shutdown()
+    assert min(readiness_by_generation) >= 0.99
+    assert statistics.fmean(readiness_by_generation[-5:]) >= (
+        statistics.fmean(readiness_by_generation[:5]) - 0.01
+    )
+    assert allocations_after_warmup is not None
+    assert snapshot.slot_allocations == allocations_after_warmup
+    assert snapshot.slot_reuses > 0
 
 
 def test_windows_unsaturated_l1_pool_refreshes_for_slow_scroll(

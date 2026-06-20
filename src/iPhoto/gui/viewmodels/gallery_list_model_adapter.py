@@ -90,6 +90,10 @@ class GalleryListModelAdapter(QAbstractListModel):
         self._thumbnail_update_timer.setSingleShot(True)
         self._thumbnail_update_timer.setInterval(16)
         self._thumbnail_update_timer.timeout.connect(self._flush_thumbnail_updates)
+        self._micro_trim_timer = QTimer(self)
+        self._micro_trim_timer.setSingleShot(True)
+        self._micro_trim_timer.setInterval(0)
+        self._micro_trim_timer.timeout.connect(self._trim_micro_cache_step)
         self._scan_batch_timer = QTimer(self)
         self._scan_batch_timer.setSingleShot(True)
         self._scan_batch_timer.setInterval(150)
@@ -328,7 +332,14 @@ class GalleryListModelAdapter(QAbstractListModel):
     @Slot(object)
     def _on_window_result(self, result: GalleryWindowResult) -> None:
         if self._store.apply_window_result(result):
+            if self._store.row_cache_needs_trim() and not self._micro_trim_timer.isActive():
+                self._micro_trim_timer.start()
             self._reconcile_full_thumbnail_demand()
+
+    @Slot()
+    def _trim_micro_cache_step(self) -> None:
+        if self._store.trim_row_cache_step() and not self._micro_trim_timer.isActive():
+            self._micro_trim_timer.start()
 
     @Slot(object)
     def handle_scan_batch(self, batch: object) -> None:
@@ -653,6 +664,12 @@ class GalleryListModelAdapter(QAbstractListModel):
         count = self.rowCount()
         if count <= 0:
             return
+        demand = self._viewport_demand
+        if demand is not None:
+            first = max(first, demand.visible_first)
+            last = min(last, demand.visible_last)
+            if last < first:
+                return
         first = max(0, min(first, count - 1))
         last = max(first, min(last, count - 1))
         top = self.index(first, 0)
