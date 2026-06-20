@@ -156,8 +156,13 @@ class GalleryThumbnailHintLoader(QObject):
             return
         self._start(request)
 
-    def cancel_pending(self) -> None:
+    def discard_queued(self) -> None:
+        """Drop coalesced work without invalidating the active read."""
+
         self._queued = None
+
+    def cancel_pending(self) -> None:
+        self.discard_queued()
         self._minimum_valid_request_id = self._latest_request_id + 1
         self._pool.clear()
 

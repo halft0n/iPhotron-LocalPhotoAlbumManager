@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from iPhoto.domain.models.query import AssetQuery, WindowResult
 from iPhoto.gui.viewmodels.gallery_thumbnail_hint_loader import (
+    GalleryThumbnailHintLoader,
     GalleryThumbnailHintRequest,
     _HintWorker,
 )
@@ -57,3 +58,18 @@ def test_hint_worker_returns_ordered_cache_candidates_without_dto_decode() -> No
         "guard",
         "far_speculative",
     ]
+
+
+def test_discard_queued_preserves_active_hint_request() -> None:
+    loader = GalleryThumbnailHintLoader()
+    active = object()
+    queued = object()
+    loader._active = True
+    loader._signals = active
+    loader._queued = queued
+
+    loader.discard_queued()
+
+    assert loader._active is True
+    assert loader._signals is active
+    assert loader._queued is None

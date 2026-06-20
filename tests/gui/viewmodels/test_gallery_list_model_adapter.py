@@ -665,6 +665,24 @@ def test_slow_thumbnail_hint_request_uses_single_guard_first_query(adapter, mock
     assert request.guard_rows == frozenset(demand.iter_full_guard_rows())
 
 
+def test_continuous_burst_discards_queued_thumbnail_hint(adapter):
+    demand = build_viewport_demand(
+        generation=13,
+        row_count=10_000,
+        visible_first=100,
+        visible_last=119,
+        direction=1,
+        screens_per_second=9.0,
+        actively_scrolling=True,
+        intent="continuous_burst",
+    )
+
+    with patch.object(adapter._thumbnail_hint_loader, "discard_queued") as discard:
+        adapter._request_thumbnail_hints(demand)
+
+    discard.assert_called_once_with()
+
+
 def test_rebind_asset_query_service_updates_store(adapter, mock_store):
     query_service = MagicMock()
     root = Path("/library")

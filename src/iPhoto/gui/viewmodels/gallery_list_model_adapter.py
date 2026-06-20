@@ -768,6 +768,7 @@ class GalleryListModelAdapter(QAbstractListModel):
     def _request_thumbnail_hints(self, demand: GalleryViewportDemand) -> None:
         if demand.intent == "continuous_burst":
             self._thumbnail_hint_request_id += 1
+            self._thumbnail_hint_loader.discard_queued()
             return
         query = self._store.current_query()
         root = self._store.active_root() or self._store.library_root()
