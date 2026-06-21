@@ -360,7 +360,7 @@ Notes:
 | `--include-package=iPhoto` | Ensures all iPhoto sub-packages (including the AOT `.so`/`.pyd`) are included |
 | `--include-package=insightface` | Bundles the InsightFace runtime used by People scanning |
 | `--include-package=onnxruntime` | Bundles the ONNX runtime used by InsightFace models |
-| `--include-data-dir=src/extension/models=extension/models` | Bundles the shared face model cache |
+| `--include-data-dir=src/extension/models=extension/models` | Optional: bundles the shared face model cache for an offline build |
 | `--nofollow-import-to=albumentations` and related pydantic packages | Avoids unused InsightFace mask-rendering dependencies that are not needed for People clustering |
 | QRhi `.qsb` data files | Required for macOS/Metal and OpenGL QRhi media previews; include `image_viewer_rhi.*`, `image_viewer_overlay.*`, and `video_renderer.*` |
 
@@ -466,4 +466,4 @@ as `extension` so the install script lands the files in the correct location.
 | `Face scanning paused: name 'Literal' is not defined` | A third-party annotation was evaluated at runtime inside the packaged app | Rebuild with the current People pipeline, which installs runtime typing compatibility before importing InsightFace |
 | `Face scanning paused: name 'NDArray' is not defined` | Same runtime annotation issue, usually from numpy typing annotations | Rebuild with the current People pipeline; do not remove the runtime typing compatibility helper |
 | `Some assets could not be face scanned and will be retried after a rescan` | Asset-level face detection failed twice; check `%LOCALAPPDATA%\iPhoto\iPhoto.log` for the real traceback | Confirm the packaged build uses `allowed_modules=["detection", "recognition"]`, then rescan. Full library rescan resets `retry`/`failed` face statuses |
-| Packaged People scan downloads models but never clusters faces | The model cache is available, but an InsightFace submodel or dependency failed during scan | Ensure Nuitka includes `insightface`, `onnxruntime`, and `extension/models`; exclude unused albumentations/pydantic packages; keep InsightFace limited to detection and recognition |
+| Packaged People scan downloads models but never clusters faces | The downloaded model cache is incomplete, unwritable, or an InsightFace dependency failed during scan | Ensure Nuitka includes `insightface` and `onnxruntime`; verify `%LOCALAPPDATA%\iPhoto\extensions\faces\v1\models` is writable and complete, or rebuild with `-IncludeOptionalAssets`; exclude unused albumentations/pydantic packages and keep InsightFace limited to detection and recognition |
