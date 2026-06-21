@@ -191,6 +191,24 @@ It reads `ui.language`, installs the active Qt translator, exposes
 language has no bundled resource. The active stored language values are
 `system`, `de`, and `zh-CN`; the language menu presents `system` as `English`.
 
+Desktop construction deliberately has two boundaries. The process first loads
+settings, configures graphics caches, creates `QApplication`, `RuntimeContext`,
+and the lightweight main-window shell, then calls `show()`. Only after the shell
+emits `firstPainted` may startup create hidden feature bundles, import and start
+`MainCoordinator`, resume library startup tasks, or select the initial
+collection. This is an architecture constraint rather than a timer-based
+optimization: optional feature imports must not migrate back above the first
+paint boundary.
+
+`Ui_MainWindow.ensure_feature()` owns the on-demand lifetime of the detail,
+preview, Map, People, and Albums bundles. It caches each bundle and emits
+`featureCreated` so the window manager and coordinator can attach behavior to
+late-created widgets. Navigation may also call `ensure_feature()` if Map or the
+Albums dashboard was not constructed during the post-paint warm-up. On Windows,
+the QRhi-backed detail bundle is constructed before `show()` because inserting
+it into a visible top-level window can recreate the native window; preview and
+People remain post-paint. Other desktop platforms defer all three.
+
 ## Layer Boundaries
 
 ### Domain
@@ -241,8 +259,20 @@ future side design. The active query path is SQL-first and windowed:
   repository-backed collection SQL for All Photos, albums, favorites, videos,
   maps/GPS, media type, and date filters.
 - `GalleryCollectionStore` treats `asset_at()` as cache-only and loads bounded
-  windows through `read_query_asset_window()`; direct row lookup uses
-  `find_row_by_path()` rather than scanning the model.
+  windows asynchronously through `GalleryWindowLoader` and
+  `read_gallery_asset_window()`; direct row lookup uses `find_row_by_path()`
+  rather than scanning the model. Loaded chunks are merged into a bounded
+  sparse cache, and stale generation/revision results are discarded.
+- Gallery SQL has two narrow projections in addition to the general collection
+  window: `read_gallery_collection_window()` returns tile-rendering fields, and
+  `read_thumbnail_hint_window()` returns only paths and existing full-thumbnail
+  keys without repeating the collection count.
+- `GalleryViewportDemand` is the contract between scrolling, sparse row loading,
+  and thumbnail scheduling. It separates visible rows, the full-thumbnail guard,
+  far speculative full-thumbnail work, and the wider micro-thumbnail warm range.
+- Delegates consume one `GalleryTileSnapshot` through `TILE_SNAPSHOT`. A paint
+  miss must remain memory-only; it schedules bounded background work and paints
+  an available micro thumbnail or placeholder instead of reading SQLite or L2.
 - Normal gallery collections default to `thumbnail_state='ready'` and require a
   non-empty `thumb_cache_key`; stale, pending, failed, or old no-key rows are
   repair/backfill candidates, not visible media grid rows.
@@ -332,37 +362,55 @@ choices.
 
 ```mermaid
 sequenceDiagram
-    participant UI as GUI/CLI
+    participant UI as GUI Shell
+    participant Paint as First Paint
     participant Runtime as RuntimeContext
+    participant Feature as Feature Bundles
+    participant Coordinator as MainCoordinator
     participant Session as LibrarySession
-    participant Surfaces as Session Surfaces
     participant Infra as Infrastructure
 
-    UI->>Runtime: open_library(root)
+    UI->>Runtime: create(defer_startup=True)
+    UI->>UI: show lightweight window shell
+    UI-->>Paint: firstPainted
+    Paint->>Feature: create deferred hidden features over event-loop turns
+    Feature->>Coordinator: import, wire, and start
+    Coordinator->>Runtime: resume_startup_tasks()
+    Runtime->>Runtime: open saved library root
     Runtime->>Session: create library-scoped session
     Session->>Infra: bind SQLite/cache/people/maps/edit adapters
-    Session->>Surfaces: expose commands and queries
-    Runtime-->>UI: session ready
+    Runtime-->>Coordinator: session surfaces ready
 ```
+
+Headless callers do not use the paint boundary; they create the same
+library-scoped session directly. Scan workers, geocoding, People AI, Qt
+Multimedia, and Maps rendering remain demand-loaded by their owning workflow.
 
 ### Open Collection
 
 ```mermaid
 sequenceDiagram
-    participant VM as ViewModel
-    participant Session as LibrarySession
+    participant Grid as Gallery Grid
+    participant Demand as Demand Coordinator
+    participant Store as Sparse Collection Store
+    participant Loader as Window/Hint Loaders
     participant Query as Asset Query Surface
     participant Repo as AssetRepositoryPort
 
-    VM->>Session: request visible window
-    Session->>Query: CollectionQuery / AssetQuery
-    Query->>Repo: read_collection_window()
-    Repo-->>Query: WindowResult rows + count + revision
-    Query-->>VM: bounded DTO window
+    Grid->>Demand: viewport + intent + generation
+    Demand->>Store: visible and micro-warm ranges
+    Store->>Loader: bounded async requests
+    Loader->>Query: gallery window / thumbnail hints
+    Query->>Repo: narrow SQL projections
+    Repo-->>Loader: rows + revision
+    Loader-->>Store: generation-tagged results
+    Store-->>Grid: merged snapshots + local row updates
 ```
 
 GUI viewmodels may cache window/selection state, but repository/session surfaces
-remain the source of truth for persisted asset state.
+remain the source of truth for persisted asset state. Explicit detail-view row
+loads are retained independently from newer viewport generations so navigation
+does not lose an in-flight target.
 
 ### Scan And Index
 
@@ -416,24 +464,34 @@ roll back local state.
 
 ```mermaid
 sequenceDiagram
-    participant VM as ViewModel
-    participant Thumb as Thumbnail Surface
-    participant Cache as Memory/Disk Cache
-    participant Edit as Edit Service
-    participant Core as Core Rendering Math
+    participant Paint as Delegate Paint
+    participant Demand as Gallery Demand
+    participant Thumb as Thumbnail Cache Service
+    participant Worker as Visible/Guard/Far Workers
+    participant L2 as Disk Cache
+    participant GUI as GUI Publish Queue
 
-    VM->>Thumb: request thumbnail
-    Thumb->>Cache: lookup
-    alt miss
-        Thumb->>Edit: read sidecar state
-        Thumb->>Core: render/apply adjustments
-        Thumb->>Cache: store
+    Paint->>Thumb: peek_full_thumbnail()
+    Thumb-->>Paint: memory pixmap or miss
+    Demand->>Thumb: request_many(generation, priority)
+    Thumb->>Worker: deduplicate/promote/schedule
+    Worker->>L2: decode existing thumbnail to QImage
+    Worker-->>GUI: bounded staging result
+    GUI->>GUI: QImage to QPixmap within frame budget
+    GUI-->>Paint: coalesced exact-row update
+    alt stale or superseded demand
+        Thumb->>Worker: cancel, back off, or discard result
     end
-    Thumb-->>VM: image ready
 ```
 
-Thumbnail infrastructure may apply edit state, but edit persistence remains
-behind session/edit sidecar services.
+Visible recovery, near guard, and far speculation use separate scheduling lanes;
+far work must not consume workers reserved for urgent visible/guard requests.
+`ThumbnailRuntimePolicy` derives worker, staging, publish, and byte-budget limits
+from platform and physical memory. L1 eviction accounts for actual image bytes,
+pins active visible demand, and prefers old/far speculative entries. Disk access
+and image decoding stay off the GUI thread; only bounded `QPixmap` publication
+runs there. Thumbnail infrastructure may apply edit state, but edit persistence
+remains behind session/edit sidecar services.
 
 ## Legacy Quarantine And Removal Policy
 

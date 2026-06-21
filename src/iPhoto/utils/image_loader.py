@@ -110,6 +110,15 @@ def load_qpixmap(source: Path, target: QSize | None = None) -> Optional[QPixmap]
 def qimage_from_bytes(data: bytes) -> Optional[QImage]:
     """Return a :class:`QImage` decoded from JPEG/PNG *data*."""
 
+    # Avoid handing arbitrary/corrupt index BLOBs to platform image plugins.
+    # Some Qt/PySide builds can crash natively instead of returning a null image.
+    if not (
+        data.startswith(b"\xff\xd8\xff")
+        or data.startswith(b"\x89PNG\r\n\x1a\n")
+        or (len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+    ):
+        return None
+
     if _Image is not None and _ImageOps is not None and _ImageQt is not None:
         try:
             with _Image.open(BytesIO(data)) as img:  # type: ignore[union-attr]

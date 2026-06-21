@@ -82,6 +82,7 @@ Small behavior contracts that are easy to break during feature work live in
 |------|-----------|
 | Scan UI publishing | [SCAN_VISIBLE_PUBLISH_GUARDRAILS.md](misc/SCAN_VISIBLE_PUBLISH_GUARDRAILS.md) |
 | Large library collection queries | [LARGE_LIBRARY_QUERY_GUARDRAILS.md](misc/LARGE_LIBRARY_QUERY_GUARDRAILS.md) |
+| Gallery scrolling, sparse windows, and thumbnail demand | [GALLERY_SCROLL_PIPELINE_GUARDRAILS.md](misc/GALLERY_SCROLL_PIPELINE_GUARDRAILS.md) |
 | Trash and restore state | [TRASH_RESTORE_STATE_GUARDRAILS.md](misc/TRASH_RESTORE_STATE_GUARDRAILS.md) |
 | Move/restore optimistic UI | [MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md](misc/MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md) |
 | Project popups and People UI regressions | [PROJECT_POPUP_GUARDRAILS.md](misc/PROJECT_POPUP_GUARDRAILS.md) |
@@ -95,7 +96,17 @@ Useful focused checks when touching scan, query, trash, move, or restore:
 .venv/bin/python -m pytest tests/application/test_library_asset_query_service.py tests/cache/test_index_store_features.py tests/performance/test_refactor_performance_baseline.py -q
 .venv/bin/python -m pytest tests/application/test_temp_library_end_to_end.py tests/application/test_library_asset_lifecycle_service.py tests/services/test_asset_move_service.py tests/services/test_restoration_service.py -q
 .venv/bin/python -m pytest tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/gui/coordinators/test_main_coordinator_pending_moves.py -q
+.venv/bin/python -m pytest tests/test_gallery_demand.py tests/test_asset_grid_scroll.py tests/gui/viewmodels/test_gallery_demand_coordinator.py tests/gui/viewmodels/test_gallery_thumbnail_hint_loader.py tests/test_thumbnail_cache_service.py tests/test_thumbnail_runtime_policy.py -q
 ```
+
+Gallery performance work has an additional opt-in real Qt event-loop benchmark:
+
+```bash
+IPHOTO_RUN_GALLERY_SCROLL_BENCHMARK=1 .venv/bin/python -m pytest tests/performance/test_gallery_scroll_qt_benchmark.py -q
+```
+
+Run it on the affected target platform with a populated L2 thumbnail cache.
+Timing results from macOS do not replace Windows or Linux validation.
 
 ---
 
@@ -870,6 +881,58 @@ QRhi `.qsb` files, and verify the packaged app opens both media previews and
 the Location view from the frozen runtime.
 
 See [docs/misc/BUILD_EXE.md](misc/BUILD_EXE.md) for detailed troubleshooting and manual flags.
+
+---
+
+## Desktop Startup Performance
+
+The GUI startup contract is “paint the window shell, then warm optional
+features.” Do not use a zero-delay timer as a substitute for the boundary:
+startup work must be connected to `MainWindow.firstPainted`. Widget creation
+still belongs on the GUI thread and should be split across event-loop turns.
+
+Keep imports above that boundary narrow. In particular, importing
+`iPhoto.gui.main` or `MainWindow` must not load NumPy, Qt Multimedia, the People
+pipeline, map rendering, asset-import services, edit-session models, or
+`MainCoordinator`. Package-level convenience imports in startup-reachable
+packages should use `__getattr__` lazy exports, while imports needed only by a
+scan or optional feature should live at the call site. Preserve public names so
+callers and test patch targets continue to work.
+
+Enable checkpoint logging for a local diagnostic run with:
+
+```bash
+IPHOTO_STARTUP_PROFILE=1 iphoto-gui
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:IPHOTO_STARTUP_PROFILE = "1"
+iphoto-gui
+```
+
+The profiler appends JSON Lines records containing `stage`, `elapsed_ms`,
+`pid`, and wall time. Logs are written to:
+
+- Windows: `%LOCALAPPDATA%\iPhoto\logs\startup.jsonl`
+- macOS: `~/Library/Logs/iPhoto/logs/startup.jsonl`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/iPhoto/logs/startup.jsonl`
+
+Unset the variable for normal launches; disabled profiling does not create a
+file. Compare at least `main_window.show_called`, `main_window.first_paint`,
+feature creation, and `main_coordinator.started` when investigating a
+regression.
+
+Run the focused startup guardrails with:
+
+```bash
+python -m pytest tests/gui/test_startup_import_boundary.py tests/gui/test_main.py
+```
+
+On Windows, also verify that startup shows one stable top-level window. The
+detail feature intentionally remains pre-show there because adding its QRhi
+widgets after the window is visible can recreate the native window.
 
 ---
 

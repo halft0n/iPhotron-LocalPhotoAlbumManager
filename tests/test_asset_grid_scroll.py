@@ -1,15 +1,17 @@
-"""Regression tests for AssetGrid.scrollContentsBy double-buffering."""
+"""Regression tests for low-latency Gallery scrolling."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
 
 import pytest
 
 pytest.importorskip("PySide6", reason="PySide6 is required for GUI tests", exc_type=ImportError)
 pytest.importorskip("PySide6.QtWidgets", reason="Qt widgets not available", exc_type=ImportError)
 
-from unittest.mock import patch
-
-from PySide6.QtCore import QModelIndex, QSize
+from PySide6.QtCore import QPoint, QSize
 from PySide6.QtGui import QResizeEvent, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QListView
 
 from iPhoto.gui.ui.widgets.asset_grid import AssetGrid
 
@@ -25,117 +27,290 @@ def qapp() -> QApplication:
     yield app
 
 
-def _make_grid(qapp: QApplication) -> AssetGrid:
-    """Create a minimal AssetGrid with a populated model."""
+def _make_grid(qapp: QApplication, rows: int = 500) -> AssetGrid:
     grid = AssetGrid()
+    grid.setViewMode(QListView.ViewMode.IconMode)
+    grid.setWrapping(True)
+    grid.setFlow(QListView.Flow.LeftToRight)
+    grid.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+    grid.setGridSize(QSize(100, 100))
+    grid.setIconSize(QSize(98, 98))
     model = QStandardItemModel()
-    for i in range(50):
-        model.appendRow(QStandardItem(f"item-{i}"))
-    grid.setModel(model)
-    grid.show()
-    qapp.processEvents()
-    return grid
-
-
-def test_scroll_linux_skips_super_and_repaints(qapp: QApplication) -> None:
-    """On Linux, scrollContentsBy must skip the blit and repaint synchronously."""
-    grid = _make_grid(qapp)
-
-    with (
-        patch.object(type(grid).scrollContentsBy, "__wrapped__", create=True),
-        patch("iPhoto.gui.ui.widgets.asset_grid._IS_LINUX", True),
-        patch.object(grid.viewport(), "repaint") as mock_repaint,
-    ):
-        # Call through the real method with the flag patched to True
-        AssetGrid.scrollContentsBy(grid, 0, -20)
-        mock_repaint.assert_called_once()
-
-
-def test_scroll_linux_flushes_pending_layout(qapp: QApplication) -> None:
-    """On Linux, scrollContentsBy must flush pending layout before repaint."""
-    grid = _make_grid(qapp)
-
-    call_order: list[str] = []
-
-    with (
-        patch("iPhoto.gui.ui.widgets.asset_grid._IS_LINUX", True),
-        patch.object(
-            grid,
-            "executeDelayedItemsLayout",
-            side_effect=lambda: call_order.append("layout"),
-        ) as mock_layout,
-        patch.object(
-            grid.viewport(),
-            "repaint",
-            side_effect=lambda: call_order.append("repaint"),
-        ) as mock_repaint,
-    ):
-        AssetGrid.scrollContentsBy(grid, 0, -20)
-        mock_layout.assert_called_once()
-        mock_repaint.assert_called_once()
-        # Layout flush must happen BEFORE the repaint
-        assert call_order == ["layout", "repaint"]
-
-
-def test_scroll_non_linux_calls_super(qapp: QApplication) -> None:
-    """On non-Linux platforms, scrollContentsBy must delegate to the base class."""
-    grid = _make_grid(qapp)
-
-    with patch("iPhoto.gui.ui.widgets.asset_grid._IS_LINUX", False):
-        # Should not raise; the default QListView path handles the scroll
-        AssetGrid.scrollContentsBy(grid, 0, -20)
-        # Viewport should not have received a forced repaint
-        # (the base class handles updating internally)
-
-
-def test_resize_linux_forces_repaint(qapp: QApplication) -> None:
-    """On Linux, resizeEvent must force a synchronous viewport repaint."""
-    grid = _make_grid(qapp)
-
-    with (
-        patch("iPhoto.gui.ui.widgets.asset_grid._IS_LINUX", True),
-        patch.object(grid.viewport(), "repaint") as mock_repaint,
-    ):
-        event = QResizeEvent(QSize(800, 600), QSize(400, 300))
-        AssetGrid.resizeEvent(grid, event)
-        mock_repaint.assert_called_once()
-
-
-def test_resize_non_linux_no_forced_repaint(qapp: QApplication) -> None:
-    """On non-Linux platforms, resizeEvent must not force a synchronous repaint."""
-    grid = _make_grid(qapp)
-
-    with (
-        patch("iPhoto.gui.ui.widgets.asset_grid._IS_LINUX", False),
-        patch.object(grid.viewport(), "repaint") as mock_repaint,
-    ):
-        event = QResizeEvent(QSize(800, 600), QSize(400, 300))
-        AssetGrid.resizeEvent(grid, event)
-        mock_repaint.assert_not_called()
-
-
-def test_visible_rows_ignores_empty_bottom_right_cell(qapp: QApplication) -> None:
-    grid = AssetGrid()
-    model = QStandardItemModel()
-    for i in range(10_000):
+    for i in range(rows):
         model.appendRow(QStandardItem(f"item-{i}"))
     grid.setModel(model)
     grid.resize(500, 300)
     grid.show()
     qapp.processEvents()
+    return grid
 
+
+def test_scroll_path_never_forces_layout_or_repaint(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+
+    with (
+        patch.object(grid, "executeDelayedItemsLayout") as layout,
+        patch.object(grid.viewport(), "repaint") as repaint,
+    ):
+        AssetGrid.scrollContentsBy(grid, 0, -20)
+
+    layout.assert_not_called()
+    repaint.assert_not_called()
+
+
+def test_resize_path_never_forces_synchronous_repaint(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+
+    with patch.object(grid.viewport(), "repaint") as repaint:
+        event = QResizeEvent(QSize(800, 600), QSize(400, 300))
+        AssetGrid.resizeEvent(grid, event)
+
+    repaint.assert_not_called()
+
+
+def test_visible_rows_use_geometry_without_index_at_probes(qapp: QApplication) -> None:
+    grid = _make_grid(qapp, rows=10_000)
     emitted: list[tuple[int, int]] = []
     grid.visibleRowsChanged.connect(lambda first, last: emitted.append((first, last)))
 
-    def fake_index_at(point):
-        if point.x() > grid.viewport().rect().center().x():
-            return QModelIndex()
-        row = 100 + max(0, point.y()) // 20
-        return model.index(row, 0)
-
-    with patch.object(grid, "indexAt", side_effect=fake_index_at):
+    with patch.object(grid, "indexAt", side_effect=AssertionError("indexAt must not be used")):
         grid._visible_range = None
         grid._emit_visible_rows()
 
     assert emitted
-    assert emitted[-1][1] < 9_999
+    first, last = emitted[-1]
+    assert first == 0
+    assert first <= last < 9_999
+
+
+class _WheelEvent:
+    def __init__(self, *, pixel_y: int = 0, angle_y: int = 0) -> None:
+        self._pixel = QPoint(0, pixel_y)
+        self._angle = QPoint(0, angle_y)
+        self.accepted = False
+
+    def pixelDelta(self) -> QPoint:
+        return self._pixel
+
+    def angleDelta(self) -> QPoint:
+        return self._angle
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+def test_trackpad_pixel_delta_is_accumulated_one_to_one(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+    bar = grid.verticalScrollBar()
+    bar.setRange(0, 10_000)
+    bar.setValue(0)
+    first = _WheelEvent(pixel_y=-11)
+    second = _WheelEvent(pixel_y=-13)
+
+    assert grid._scroll_controller.handle_wheel(first) is True
+    assert grid._scroll_controller.handle_wheel(second) is True
+    qapp.processEvents()
+
+    assert first.accepted and second.accepted
+    assert bar.value() == 24
+
+
+def test_discrete_wheel_uses_constant_system_configured_step(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+    bar = grid.verticalScrollBar()
+    bar.setRange(0, 10_000)
+    bar.setValue(0)
+
+    with patch.object(QApplication, "wheelScrollLines", return_value=3):
+        assert grid._scroll_controller.handle_wheel(_WheelEvent(angle_y=-120))
+        qapp.processEvents()
+        first_value = bar.value()
+        assert grid._scroll_controller.handle_wheel(_WheelEvent(angle_y=-120))
+        qapp.processEvents()
+
+    assert first_value == 300
+    assert bar.value() == 600
+
+
+def test_discrete_wheel_respects_zero_system_scroll_lines(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+    bar = grid.verticalScrollBar()
+    bar.setRange(0, 10_000)
+    bar.setValue(500)
+
+    with patch.object(QApplication, "wheelScrollLines", return_value=0):
+        assert grid._scroll_controller.handle_wheel(_WheelEvent(angle_y=-120))
+        qapp.processEvents()
+
+    assert bar.value() == 500
+
+
+def test_rapid_back_and_forth_notches_keep_constant_distance(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+    bar = grid.verticalScrollBar()
+    bar.setRange(0, 100_000)
+    bar.setValue(50_000)
+    values = [bar.value()]
+
+    with patch.object(QApplication, "wheelScrollLines", return_value=3):
+        for index in range(100):
+            angle = -120 if index % 2 == 0 else 120
+            assert grid._scroll_controller.handle_wheel(_WheelEvent(angle_y=angle))
+            qapp.processEvents()
+            values.append(bar.value())
+
+    assert {abs(current - previous) for previous, current in zip(values, values[1:])} == {300}
+    assert bar.value() == 50_000
+
+
+def test_discrete_wheel_uses_cadence_instead_of_single_notch_distance(
+    qapp: QApplication,
+) -> None:
+    grid = _make_grid(qapp)
+    controller = grid._scroll_controller
+    controller._last_input_at = 1.0
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.2,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    assert controller._intent == "slow_continuous"
+    controller._publish_directional_dwell()
+    assert controller.viewport_state(500).intent == "directional_dwell"
+
+
+def test_rapid_discrete_wheel_enters_continuous_burst(qapp: QApplication) -> None:
+    grid = _make_grid(qapp)
+    controller = grid._scroll_controller
+    controller._last_input_at = 1.0
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.05,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    assert controller._intent == "continuous_burst"
+
+
+def test_slow_discrete_wheel_after_burst_settle_restores_full_prefetch(
+    qapp: QApplication,
+) -> None:
+    grid = _make_grid(qapp)
+    controller = grid._scroll_controller
+    controller._last_input_at = 1.0
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.05,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    assert controller._intent == "continuous_burst"
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.20,
+    ):
+        controller._publish_idle_state()
+    assert list(controller._angle_intervals_ms) == []
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.30,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.31,
+    ):
+        demand = controller.viewport_state(500)
+    assert demand is not None
+    assert demand.intent == "slow_continuous"
+    assert demand.full_guard_range != demand.visible_range
+    assert demand.full_guard_last > demand.visible_last
+    assert list(demand.iter_full_prefetch_rows())
+
+
+def test_slow_discrete_wheel_immediately_after_burst_rebuilds_guard(
+    qapp: QApplication,
+) -> None:
+    grid = _make_grid(qapp)
+    controller = grid._scroll_controller
+    controller._last_input_at = 1.0
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.05,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    assert controller._intent == "continuous_burst"
+
+    with (
+        patch.object(QApplication, "wheelScrollLines", return_value=3),
+        patch(
+            "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+            return_value=1.30,
+        ),
+    ):
+        assert controller.handle_wheel(_WheelEvent(angle_y=-120))
+
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.31,
+    ):
+        demand = controller.viewport_state(500)
+
+    assert demand is not None
+    assert demand.intent == "slow_continuous"
+    assert demand.full_guard_range != demand.visible_range
+    assert demand.full_guard_last > demand.visible_last
+    assert demand.full_prefetch_last > demand.visible_last
+    assert list(demand.iter_full_prefetch_rows())
+
+
+def test_large_programmatic_scroll_keeps_full_work_visible_until_settled(qapp: QApplication) -> None:
+    grid = _make_grid(qapp, rows=10_000)
+    controller = grid._scroll_controller
+    controller._last_value = 0
+    controller._last_value_at = 1.0
+    target = grid.viewport().height() * 3
+
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.01,
+    ):
+        grid.verticalScrollBar().setValue(target)
+
+    with patch(
+        "iPhoto.gui.ui.widgets.gallery_scroll_controller.time.monotonic",
+        return_value=1.02,
+    ):
+        demand = controller.viewport_state(10_000)
+
+    assert demand is not None
+    assert demand.full_prefetch_range == demand.visible_range
+
+    controller._publish_idle_state()
+    settled = controller.viewport_state(10_000)
+    assert settled is not None
+    assert settled.full_guard_first < settled.visible_first
+    assert settled.full_guard_last > settled.visible_last

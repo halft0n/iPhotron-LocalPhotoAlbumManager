@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import QModelIndex, QPoint, QTimer, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QListView
 
 from ....config import LONG_PRESS_THRESHOLD_MS
+from .gallery_scroll_controller import GalleryScrollController
 
 _IS_DARWIN = sys.platform == "darwin"
-_IS_LINUX = sys.platform == "linux"
 
 
 class AssetGrid(QListView):
@@ -27,6 +27,7 @@ class AssetGrid(QListView):
     previewReleased = Signal()
     previewCancelled = Signal()
     visibleRowsChanged = Signal(int, int)
+    viewportStateChanged = Signal(object)
     modelAboutToChange = Signal(object)
     modelChanged = Signal(object)
 
@@ -43,7 +44,7 @@ class AssetGrid(QListView):
         self._suppress_next_preview_leave = False
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
-        self._update_timer.setInterval(100)
+        self._update_timer.setInterval(0)
         self._update_timer.timeout.connect(self._emit_visible_rows)
         self._visible_range: Optional[tuple[int, int]] = None
         self._model = None
@@ -51,6 +52,10 @@ class AssetGrid(QListView):
         self._drop_handler: Optional[Callable[[List[Path]], None]] = None
         self._drop_validator: Optional[Callable[[List[Path]], bool]] = None
         self._preview_enabled = True
+        self._scroll_controller = GalleryScrollController(
+            self,
+            self._schedule_visible_rows_update,
+        )
 
     # ------------------------------------------------------------------
     # Mouse event handling
@@ -156,47 +161,16 @@ class AssetGrid(QListView):
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
-        if _IS_LINUX:
-            # On Linux with WA_TranslucentBackground, enlarging the window
-            # exposes new viewport area that Qt has not yet painted.  The
-            # compositor may present the frame before the deferred
-            # ``update()`` arrives, producing visible tearing in the
-            # newly exposed region.  A synchronous repaint ensures the
-            # full viewport is composited from Qt's back buffer before
-            # the frame is shown — the same double-buffering strategy
-            # used in ``scrollContentsBy()``.
-            self.viewport().repaint()
         self._schedule_visible_rows_update()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # type: ignore[override]
-        if _IS_LINUX:
-            # Double-buffering strategy for Linux with WA_TranslucentBackground:
-            #
-            # The default ``super().scrollContentsBy()`` calls the C++
-            # ``viewport()->scroll(dx, dy)`` which triggers a pixel-shift
-            # blit.  Under ARGB visuals (both X11 and Wayland) this blit
-            # races with the compositor and produces visible tearing or
-            # checkerboard artefacts.
-            #
-            # We skip the super call entirely so the blit never happens.
-            # The scrollbar position has *already* been updated by the time
-            # this method is called (by ``QAbstractScrollArea``), so the
-            # next ``paintEvent`` will render all items at their correct
-            # offsets.
-            #
-            # Skipping super() also skips the ``doDelayedItemsLayout()``
-            # call that ``QListView::scrollContentsBy()`` normally performs.
-            # After a resize, subclasses like ``GalleryGridView`` update
-            # icon/grid sizes which schedules a delayed items layout.  If
-            # the user scrolls before that layout fires, the viewport would
-            # be repainted with stale item positions, producing checkerboard
-            # artefacts.  Flushing the pending layout first ensures item
-            # geometry is up-to-date before the synchronous repaint.
-            self.executeDelayedItemsLayout()
-            self.viewport().repaint()
-        else:
-            super().scrollContentsBy(dx, dy)
+        super().scrollContentsBy(dx, dy)
         self._schedule_visible_rows_update()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # type: ignore[override]
+        if self._scroll_controller.handle_wheel(event):
+            return
+        super().wheelEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # type: ignore[override]
         if not self._external_drop_enabled:
@@ -295,7 +269,8 @@ class AssetGrid(QListView):
         return bool(buttons & Qt.MouseButton.LeftButton)
 
     def _schedule_visible_rows_update(self) -> None:
-        self._update_timer.start()
+        if not self._update_timer.isActive():
+            self._update_timer.start()
 
     def _viewport_pos(self, event: QMouseEvent) -> QPoint:
         """Return the event position mapped into viewport coordinates."""
@@ -350,73 +325,16 @@ class AssetGrid(QListView):
             if self._visible_range is not None:
                 self._visible_range = None
             return
-        viewport_rect = self.viewport().rect()
-        if viewport_rect.isEmpty():
+        state = self._scroll_controller.viewport_state(row_count)
+        if state is None:
             return
-
-        visible_bounds = self._visible_row_bounds(viewport_rect)
-        if visible_bounds is None:
-            return
-        first, last = visible_bounds
-
-        buffer = 20
-        first = max(0, first - buffer)
-        last = min(row_count - 1, last + buffer)
-        if first > last:
-            return
+        first, last = state.visible_first, state.visible_last
 
         visible_range = (first, last)
-        if self._visible_range == visible_range:
-            return
-
-        self._visible_range = visible_range
-        self.visibleRowsChanged.emit(first, last)
-
-    def _visible_row_bounds(self, viewport_rect) -> Optional[tuple[int, int]]:
-        first = self._find_visible_row(viewport_rect, from_bottom=False)
-        last = self._find_visible_row(viewport_rect, from_bottom=True)
-        if first is None or last is None:
-            return None
-        if first > last:
-            first, last = last, first
-        return first, last
-
-    def _find_visible_row(self, viewport_rect, *, from_bottom: bool) -> Optional[int]:
-        x_positions = self._sample_viewport_x_positions(viewport_rect)
-        top = viewport_rect.top()
-        bottom = viewport_rect.bottom()
-        step = max(1, min(24, max(1, viewport_rect.height()) // 12 or 1))
-        if from_bottom:
-            y_values = range(bottom, top - 1, -step)
-            row_selector = max
-        else:
-            y_values = range(top, bottom + 1, step)
-            row_selector = min
-
-        for y in y_values:
-            rows: list[int] = []
-            for x in x_positions:
-                index = self.indexAt(QPoint(x, y))
-                if index.isValid():
-                    rows.append(index.row())
-            if rows:
-                return row_selector(rows)
-        return None
-
-    @staticmethod
-    def _sample_viewport_x_positions(viewport_rect) -> list[int]:
-        left = viewport_rect.left()
-        right = viewport_rect.right()
-        center = viewport_rect.center().x()
-        width = max(1, viewport_rect.width())
-        candidates = [
-            left,
-            left + width // 4,
-            center,
-            right - width // 4,
-            right,
-        ]
-        return sorted({max(left, min(right, x)) for x in candidates})
+        if self._visible_range != visible_range:
+            self._visible_range = visible_range
+            self.visibleRowsChanged.emit(first, last)
+        self.viewportStateChanged.emit(state)
 
     def _extract_local_files(self, event: QDropEvent | QDragEnterEvent | QDragMoveEvent) -> List[Path]:
         """Return all unique local file paths advertised by *event*.

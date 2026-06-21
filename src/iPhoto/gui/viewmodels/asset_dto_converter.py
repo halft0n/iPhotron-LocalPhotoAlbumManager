@@ -219,6 +219,11 @@ def to_dto(asset: Asset, library_root: Optional[Path]) -> AssetDTO:
         is_live=is_live,
         is_pano=is_pano,
         micro_thumbnail=micro_thumbnail_image,
+        thumb_cache_key=(
+            metadata.get("thumb_cache_key")
+            if isinstance(metadata.get("thumb_cache_key"), str)
+            else None
+        ),
     )
 
 
@@ -267,11 +272,6 @@ def geotagged_asset_to_dto(asset: object, library_root: Path) -> Optional[AssetD
         captured_at = asset_created_at
     elif isinstance(asset_captured_at, datetime):
         captured_at = asset_captured_at
-    else:
-        try:
-            captured_at = datetime.fromtimestamp(abs_path.stat().st_mtime)
-        except (FileNotFoundError, OSError, ValueError):
-            captured_at = None
 
     return AssetDTO(
         id=asset.asset_id,
@@ -289,6 +289,7 @@ def geotagged_asset_to_dto(asset: object, library_root: Path) -> Optional[AssetD
         is_live=is_live,
         is_pano=False,
         micro_thumbnail=None,
+        thumb_cache_key=None,
     )
 
 
@@ -339,6 +340,7 @@ def scan_row_to_dto(
     is_favorite = bool(row.get("featured") or row.get("favorite") or row.get("is_favorite"))
     is_pano = bool(row.get("is_pano"))
     micro_thumbnail = _decode_micro_thumbnail(row.get("micro_thumbnail"))
+    thumb_cache_key = row.get("thumb_cache_key")
 
     return AssetDTO(
         id=str(row.get("id") or abs_path),
@@ -350,12 +352,13 @@ def scan_row_to_dto(
         height=int(height or 0),
         duration=float(duration or 0.0),
         size_bytes=int(size_bytes or 0),
-        metadata=dict(row),
+        metadata={key: value for key, value in row.items() if key != "micro_thumbnail"},
         is_favorite=is_favorite,
         face_status=row.get("face_status"),
         is_live=is_live,
         is_pano=is_pano,
         micro_thumbnail=micro_thumbnail,
+        thumb_cache_key=thumb_cache_key if isinstance(thumb_cache_key, str) else None,
     )
 
 

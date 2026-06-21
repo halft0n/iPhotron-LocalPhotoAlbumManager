@@ -1,11 +1,11 @@
-# Contributing to iPhoto
+# Contributing to iPhotron
 
-Thank you for your interest in contributing to iPhoto! We are building a folder-native, non-destructive photo manager that respects your data and filesystem.
+Thank you for your interest in contributing to iPhotron! We are building a folder-native, non-destructive photo manager that respects your data and filesystem.
 
 ## 1. Introduction
 
 ### Welcome & Purpose
-iPhoto aims to bring a polished macOS *Photos*-inspired experience to Windows,
+iPhotron aims to bring a polished macOS *Photos*-inspired experience to Windows,
 macOS, and Linux while preserving a strict "Folder = Album" philosophy. We
 prioritize data integrity, performance, and a seamless user experience without
 locking you into a proprietary database.
@@ -32,7 +32,7 @@ Please note that this project is released with a [Code of Conduct](CODE_OF_CONDU
 2.  **Install dependencies**:
     Install the package in editable mode along with development dependencies:
     ```bash
-    pip install -e .[dev]
+    pip install -e ".[dev]"
     ```
     This command installs `pytest`, `ruff`, `black`, `mypy`, and other necessary tools.
 
@@ -48,22 +48,27 @@ Our design philosophy is strict to ensure user trust and data safety:
 
 ## 4. Project Architecture
 
-The project follows a layered architecture to separate core logic from the GUI.
+The production runtime is a library-scoped modular desktop monolith. One
+`RuntimeContext` owns the active `LibrarySession`; GUI, CLI, watchers, and
+workers use application/session surfaces instead of legacy facades.
 
 ### Layered Architecture
-*   **Domain Layer** (`src/iPhoto/domain/`): Pure domain models and repository interfaces, framework-independent.
+*   **Domain Layer** (`src/iPhoto/domain/`): Pure values, query models, and domain services, framework-independent.
 *   **Application Layer** (`src/iPhoto/application/`): Business use cases and application services coordinating domain logic.
-*   **Infrastructure Layer** (`src/iPhoto/infrastructure/`): Concrete implementations (SQLite repositories, metadata providers).
-*   **Core Backend** (`src/iPhoto/`): Pure Python logic including models, I/O, core algorithms, and cache management. Has **no** dependencies on PySide6 or any GUI libraries.
+*   **Infrastructure Layer** (`src/iPhoto/infrastructure/`): Concrete SQLite, metadata, thumbnail, and runtime adapters implementing application ports.
+*   **Bootstrap/Runtime** (`src/iPhoto/bootstrap/`): `RuntimeContext`, `LibrarySession`, and library-scoped composition.
 *   **GUI Layer** (`src/iPhoto/gui/`): The frontend implementation using PySide6 (Qt6) following MVVM pattern with coordinators and view models.
 *   **Maps Module** (`src/maps/`): Semi-independent offline map runtime with legacy vector tiles, helper-backed OBF rendering, and native OsmAnd widgets.
-*   **Facade Pattern**: `app.py` acts as the backend facade, while `gui/facade.py` bridges the backend to the frontend using Qt signals/slots.
+
+Production source must not import `iPhoto.legacy` or `iPhoto.models.*`. The
+quarantined compatibility subtree is not an extension point. See
+`docs/architecture.md` and `AGENT.md` for the authoritative dependency rules.
 
 ### Module Responsibilities
-*   `domain/`: Domain entities (`Album`, `Asset`) and repository interfaces (`IAlbumRepository`, `IAssetRepository`).
-*   `application/`: Business use cases (open album, scan album, pair Live Photos) and application services.
+*   `domain/`: Domain values, collection queries, and pure services.
+*   `application/`: Use cases, DTOs, events, services, and public port protocols.
+*   `bootstrap/`: Runtime/session composition and library-scoped service surfaces.
 *   `infrastructure/`: SQLite repository implementations, database connection pool, metadata services.
-*   `models/`: Legacy data classes (dataclasses) and manifest I/O.
 *   `io/`: Filesystem scanning, metadata reading, and sidecar writing.
 *   `core/`: Algorithms for pairing Live Photos, sorting, filtering, and image adjustment resolvers (light, color, B&W, curves, selective color, levels).
 *   `cache/`: Management of global SQLite database (`global_index.db`), migrations, recovery, and file-level locking.
@@ -72,6 +77,7 @@ The project follows a layered architecture to separate core logic from the GUI.
 *   `utils/`: General utilities and wrappers for `ExifTool` and `FFmpeg`.
 *   `gui/coordinators/`: MVVM coordinators managing view navigation and business flow.
 *   `gui/viewmodels/`: View models for data binding and presentation logic.
+*   `legacy/`: Quarantined historical compatibility code; no production imports or new features.
 
 ## 5. Coding Standards
 
@@ -90,7 +96,7 @@ The project follows a layered architecture to separate core logic from the GUI.
 
 ### File I/O Safety
 *   **Atomic Writes**: Always write to a temporary file (e.g., `.tmp`) and then rename it to the target filename to prevent data corruption during crashes.
-*   **Locking**: Before writing to manifests or index files, check `.lexiphoto/locks/` (or equivalent) to avoid race conditions.
+*   **Locking**: Use the existing `.iPhoto/locks/` and repository transaction/locking helpers; do not invent a parallel lock root.
 *   **Cross-Platform**: Use `pathlib.Path` for all file path manipulations to ensure compatibility with Windows, macOS, and Linux.
 
 ## 6. Performance & Optimization Guidelines
@@ -98,15 +104,18 @@ The project follows a layered architecture to separate core logic from the GUI.
 Performance is critical for handling large photo libraries.
 
 ### Optimization Hierarchy
-1.  **NumPy Vectorization** (Highest Priority): Use NumPy array operations for full-image manipulations or batch data processing. This utilizes SIMD and is much faster than loops.
-2.  **Numba JIT**: Use `@jit(nopython=True)` for pixel-level loops or complex logic that cannot be vectorized.
-3.  **Pure Python/Qt** (Last Resort): Use standard Python loops or Qt API calls only when the above are not applicable.
+1.  Measure the complete user-visible path before choosing an implementation.
+2.  Remove unbounded work, synchronous I/O, over-wide queries, and redundant GUI updates before introducing native acceleration.
+3.  Use NumPy/Numba for measured numeric or pixel-processing hotspots where they improve the supported platform path.
+4.  Consider C/C++ or Qt Quick only after profiling shows Python/PySide or Qt Widgets remains the limiting factor.
 
 ### Memory Efficiency
 *   **In-Place Operations**: Use the `out=` argument in NumPy functions (e.g., `np.clip(..., out=arr)`) to avoid creating unnecessary copies of large image arrays.
 
 ### Benchmarks
 *   Always measure performance before and after optimization to ensure your changes actually provide a benefit.
+*   Gallery paint, model access, and thumbnail peek paths must remain memory-only.
+*   Changes to Gallery demand, sparse windows, thumbnail workers, or publish budgets must run the focused checks in `docs/misc/GALLERY_SCROLL_PIPELINE_GUARDRAILS.md` and the opt-in real Qt benchmark on the affected platform.
 
 ## 7. Graphics Guidelines
 
@@ -146,6 +155,7 @@ pytest
 *   Tests must simulate missing or corrupt files to ensure the application handles them gracefully without crashing.
 *   **Rebuildability**: Verify that deleting `global_index.db` or `links.json` results in them being correctly rebuilt by the system through re-scanning.
 *   **People State Safety**: When changing face clustering, merges, covers, hidden people, or groups, verify both repository behavior and GUI behavior. Stable People state must survive rescans and runtime snapshot rebuilds.
+*   **Architecture**: Run `python3 tools/check_architecture.py` and `pytest tests/architecture -q` for boundary-sensitive work.
 
 ## 9. Submitting Issues
 
@@ -157,7 +167,7 @@ When reporting a bug, please include:
 2.  **Steps to Reproduce**: Detailed steps to help us see the problem.
     *   Example: "Open album -> Right click photo -> Select 'Crop'..."
 3.  **Expected vs. Actual Behavior**: What you thought would happen vs. what actually happened.
-4.  **Environment**: OS version, Python version, and iPhoto version.
+4.  **Environment**: OS version, Python version, and iPhotron version.
 
 ### Feature Requests
 Please describe the feature you would like to see, why you need it, and how it should work.
@@ -217,4 +227,4 @@ Before submitting a Pull Request, please ensure:
 - [ ] (If applicable) You have run focused People tests for face clusters, groups, covers, hidden state, and merge behavior.
 - [ ] (If applicable) You have verified GPU coordinate logic matches the spec across logical and device-pixel viewports.
 - [ ] (If applicable) You have tested map runtime changes with `python src/maps/main.py --backend auto`, plus the forced backend that your change touches.
-- [ ] (If applicable) You have benchmarked performance critical changes.
+- [ ] (If applicable) You have run the Gallery Qt benchmark on every affected target platform, not substituted macOS timing for Windows/Linux.

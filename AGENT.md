@@ -110,6 +110,9 @@ State rules:
 - Large-library gallery reads are SQL-first and windowed through collection
   query APIs. Normal visible rows must be thumbnail-ready and carry a
   `thumb_cache_key`.
+- Gallery paint/model access is memory-only. Sparse rows load asynchronously;
+  viewport generations reject stale window and thumbnail results, and visible,
+  guard, and far-speculative thumbnail lanes keep separate capacity.
 - `links.json` is derived compatibility materialization for Live Photo payloads;
   target runtime behavior should read roles through repository/session surfaces.
 - `cache/thumbs/` and People thumbnails are disposable.

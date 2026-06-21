@@ -4,6 +4,121 @@ All notable changes to **iPhotron** are documented in this file.
 
 ---
 
+## 🚀 v6.6.8 — Gallery Scroll Performance, Async Windows & Thumbnail Demand
+
+🖼️ *A Gallery performance release focused on low-latency scrolling, sparse
+viewport windows, micro-thumbnail warm-up, predictive full-thumbnail reads, and
+memory-aware thumbnail publishing.*
+
+### Key Updates
+
+#### 🪟 Desktop Startup & On-Demand Features
+- Added a real `MainWindow.firstPainted` boundary. Hidden feature widgets and
+  the main coordinator are now created over later event-loop turns instead of
+  blocking the initial window paint.
+- Split the main UI into on-demand detail, preview, Map, People, and Albums
+  feature bundles, with `featureCreated` wiring for components that appear
+  after the window shell.
+- Kept the GPU-backed detail page in the Windows pre-show phase to avoid native
+  window recreation and a visible false first window; macOS and Linux defer it
+  for the faster first-frame path.
+- Reused the settings object loaded during early startup and avoided rewriting
+  an unchanged settings file on every launch.
+
+#### 🧩 Lazy Imports & Runtime Work
+- Replaced eager package exports and startup imports across GUI services,
+  widgets, models, scan workers, geocoding, People, and library runtime code
+  with compatibility-preserving lazy imports.
+- Deferred pending OsmAnd extension installation until the Map feature is first
+  created, and moved Windows map and face assets to versioned per-user extension
+  roots under `%LOCALAPPDATA%`.
+- Added `IPHOTO_STARTUP_PROFILE` checkpoints written as JSON Lines to the
+  platform log directory; diagnostics are disabled and perform no file I/O by
+  default.
+- Added subprocess import-boundary tests that prevent NumPy, Qt Multimedia,
+  People AI, Maps rendering, and the coordinator graph from returning to the
+  initial GUI import path.
+
+#### 📦 Windows Startup Packaging
+- Changed the Windows Nuitka script to build a smaller base package by default;
+  map data/native binaries and face models are included only with
+  `-IncludeOptionalAssets` for offline deployments.
+- Added a Nuitka compilation report for auditing frozen imports while retaining
+  explicit package inclusion required by lazy package exports.
+
+#### ⚡ Gallery Scroll Pipeline
+- Added `GalleryScrollController` for wheel-aware scroll handling, viewport
+  generation tracking, scroll intent classification, and display thumbnail
+  bucket selection.
+- Replaced buffered visible-row polling with `GalleryViewportDemand`, publishing
+  visible, full-prefetch, and micro-warm ranges from the grid every event-loop
+  turn.
+- Added demand policy constants for slow, medium, fast, directional-dwell, and
+  continuous-burst scrolling so the gallery can trade prefetch depth for input
+  responsiveness.
+- Removed the extra off-screen paint pass in `GalleryGridView`; scrolling now
+  relies on warmed model rows and thumbnail demand instead of manual adjacent-row
+  painting.
+
+#### 🧩 Sparse Gallery Model Windows
+- Added asynchronous `GalleryWindowLoader` and request/result types for
+  generation-aware background loading of gallery windows.
+- Reworked `GalleryCollectionStore` into a sparse, OrderedDict-backed cache that
+  merges visible and warm chunks without replacing the whole model window.
+- Added row-load signaling for deep or detail-view requests, plus retained
+  explicit row loads across newer viewport generations.
+- Preserved optimistic move overlays, pinned rows, revision checks, and stale
+  result filtering across asynchronous window results.
+
+#### 🖼️ Tile Snapshots & Model Updates
+- Added `GalleryTileRecord` and `GalleryTileSnapshot` so delegates can paint
+  gallery tiles from one compact role instead of repeatedly querying many roles.
+- Added the `TILE_SNAPSHOT` role and updated the asset delegate to draw full
+  thumbnails, micro thumbnails, badges, favorite state, video duration, and
+  current-row state from the snapshot when available.
+- Batched thumbnail-ready model updates so bursts of completed thumbnails emit
+  coalesced `dataChanged` ranges.
+
+#### 🧠 Thumbnail Runtime & Prefetching
+- Rebuilt `ThumbnailCacheService` around explicit visible, predictive, and
+  far-speculative request lanes with separate concurrency controls.
+- Added `ThumbnailRuntimePolicy` to size memory limits, worker counts, staging
+  depth, publish budget, miss TTLs, and speculative backoff from platform and
+  physical memory.
+- Added L1 byte accounting with pinned-visible retention and eviction preference
+  for old demand or far speculative entries before visible thumbnails.
+- Added staged publish queues that convert a bounded number of `QImage` results
+  to `QPixmap` on the GUI thread, keeping expensive conversion work under a
+  small frame budget.
+- Added L2-only predictive reads for prefetched thumbnails, active prefetch
+  promotion when an item becomes visible, and cancellation/backoff metrics for
+  speculative work.
+
+#### 🗂️ Index Hints & Thumbnail Backfill
+- Added lightweight gallery collection windows in the index repository that omit
+  wide metadata columns while preserving fields needed for tile rendering.
+- Added thumbnail hint windows that return paths and existing 512px cache keys
+  without doing collection counts, enabling predictive L2 reads for nearby rows.
+- Moved thumbnail backfill candidate discovery off the gallery load path and
+  allowed old ready rows with missing micro thumbnails to derive a micro layer
+  from the existing full-size cache.
+- Hardened micro-thumbnail decoding so corrupt index blobs are rejected before
+  reaching Qt image plugins.
+
+#### 🧪 Tests & Benchmarks
+- Added coverage for viewport demand construction, scroll-controller behavior,
+  async gallery window merging, stale generation handling, explicit row loads,
+  tile snapshot updates, thumbnail hint loading, and runtime policy detection.
+- Added thumbnail cache tests for visible/predictive/speculative scheduling,
+  L2-only reads, staged publishing, memory pressure eviction, promotion, and
+  backoff behavior.
+- Added a Qt gallery scroll performance benchmark covering warmed rows, next
+  screen thumbnails, burst behavior, and display-bucket residency.
+- Documented the production sparse-window/thumbnail-demand architecture and a
+  focused Gallery scroll regression checklist under `docs/misc/`.
+
+---
+
 ## 🚀 v6.6.6 — i18n, macOS Rendering, Map Runtime & Location Resilience
 
 🌐 *A UI internationalization and platform-compatibility pass focused on

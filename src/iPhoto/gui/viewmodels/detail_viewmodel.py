@@ -79,8 +79,12 @@ class DetailViewModel(BaseViewModel):
         self._presentation_reload_token = 0
         self._pending_restore_requests: dict[Path, MediaRestoreRequest] = {}
         self._video_presentation_cache: dict | None = None
+        self._pending_show_row: int | None = None
         self._store.data_changed.connect(self._handle_store_changed)
         self._store.row_changed.connect(self._handle_row_changed)
+        row_loaded = getattr(self._store, "row_loaded", None)
+        if row_loaded is not None:
+            row_loaded.connect(self._handle_row_loaded)
         restore_signal = getattr(self._media_session, "restoreRequested", None)
         if restore_signal is not None:
             restore_signal.connect(self._handle_restore_requested)
@@ -107,7 +111,9 @@ class DetailViewModel(BaseViewModel):
     def show_row(self, row: int) -> None:
         source = self._media_session.set_current_row(row)
         if source is None:
+            self._pending_show_row = row if 0 <= row < self._store.count() else None
             return
+        self._pending_show_row = None
         self._store.pin_row(row)
         dto = self._store.asset_at(row)
         if dto is None:
@@ -231,6 +237,10 @@ class DetailViewModel(BaseViewModel):
         current_row = self.current_row.value
         if current_row == row:
             self._refresh_presentation()
+
+    def _handle_row_loaded(self, row: int) -> None:
+        if self._pending_show_row == row:
+            self.show_row(row)
 
     def _handle_restore_requested(self, request: object) -> None:
         if not isinstance(request, MediaRestoreRequest):

@@ -104,6 +104,7 @@ Wichtige Highlights:
 - 🗂 Ordnerbasiertes Design — jeder Ordner *ist* ein Album, kein Import erforderlich.
 - ⚙️ Ordnerlokale Manifeste speichern Album-Metadaten wie Cover, Favoriten und Reihenfolge.
 - ⚡ **SQLite-gestützte globale Datenbank** für schnelle session-gestützte Abfragen auf massiven Bibliotheken.
+- 🖼 Bedarfsgesteuertes Gallery-Scrolling mit dünn besetzten asynchronen Fenstern, Micro-Thumbnail-Fallback und speicherbewusstem Full-Thumbnail-Prefetching.
 - 🧠 Intelligentes inkrementelles Scannen mit persistentem SQLite-Index.
 - 🎥 Vollständige **Live Photo**-Paarungs- und Wiedergabeunterstützung.
 - 🗺 Optionale Kartenansicht, die GPS-Metadaten über alle Fotos und Videos visualisiert und ohne Maps Extension sauber zurückfällt.
@@ -187,6 +188,15 @@ hinter der Library-Session-Grenze dauerhaft erhalten, damit Namen, Cover,
 versteckte Personen, Gruppen und manuelle Gesichtsanmerkungen erneute Scans
 überstehen.
 ![People and groups interface](<../picture/People & Group.png>)
+
+### ⚡ Gallery für große Bibliotheken
+Die Gallery verwendet dünn besetzte asynchrone SQL-Fenster, statt beim Öffnen
+einer Sammlung die gesamte Bibliothek zu materialisieren. Die Scroll-Absicht
+steuert getrennte Warteschlangen für sichtbare, nahe Guard- und spekulative
+Thumbnails. Schnelle Scroll-Bursts halten die Eingabe reaktionsfähig und nutzen
+vorgewärmte Micro-Thumbnails, während Full-Thumbnails außerhalb des GUI-Threads
+dekodiert werden. Speicher- und Worker-Budgets passen sich Plattform und RAM an;
+generation-basierte Stornierung verhindert Updates aus veralteten Viewports.
 
 ### 🖼 Immersive Detailansicht
 Ein eleganter Foto-/Videobetrachter mit Filmstreifen-Navigator, schwebendem

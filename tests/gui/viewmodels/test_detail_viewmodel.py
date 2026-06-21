@@ -116,6 +116,20 @@ class _LazyCollection:
         return None
 
 
+class _AsyncLazyCollection(_LazyCollection):
+    def __init__(self) -> None:
+        super().__init__()
+        self.row_loaded = Signal()
+
+    def ensure_row_loaded(self, row: int, *, emit_signals: bool = True) -> bool:
+        del emit_signals
+        return row in self._loaded_rows
+
+    def complete_row_load(self, row: int) -> None:
+        self._loaded_rows.add(row)
+        self.row_loaded.emit(row)
+
+
 def test_next_can_open_row_outside_current_store_window() -> None:
     store = _LazyCollection()
     session = MediaSelectionSession()
@@ -134,6 +148,32 @@ def test_next_can_open_row_outside_current_store_window() -> None:
     assert vm.current_row.value == 1
     assert vm.current_path.value == Path("/tmp/deep.jpg")
     assert vm.presentation.value.path == Path("/tmp/deep.jpg")
+
+
+def test_show_row_retries_after_async_placeholder_load() -> None:
+    store = _AsyncLazyCollection()
+    session = MediaSelectionSession()
+    session.bind_collection(store)
+    vm = DetailViewModel(
+        collection_store=store,
+        media_session=session,
+        asset_state_service=Mock(),
+        adjustment_commit_port=None,
+        edit_service_getter=None,
+    )
+    requested = []
+    vm.route_requested.connect(requested.append)
+
+    vm.show_row(1)
+
+    assert vm.current_row.value == -1
+    assert requested == []
+
+    store.complete_row_load(1)
+
+    assert vm.current_row.value == 1
+    assert vm.current_path.value == Path("/tmp/deep.jpg")
+    assert requested == ["detail"]
 
 
 def test_toggle_favorite_updates_store_and_presentation():
