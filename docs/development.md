@@ -82,6 +82,7 @@ Small behavior contracts that are easy to break during feature work live in
 |------|-----------|
 | Scan UI publishing | [SCAN_VISIBLE_PUBLISH_GUARDRAILS.md](misc/SCAN_VISIBLE_PUBLISH_GUARDRAILS.md) |
 | Large library collection queries | [LARGE_LIBRARY_QUERY_GUARDRAILS.md](misc/LARGE_LIBRARY_QUERY_GUARDRAILS.md) |
+| Gallery scrolling, sparse windows, and thumbnail demand | [GALLERY_SCROLL_PIPELINE_GUARDRAILS.md](misc/GALLERY_SCROLL_PIPELINE_GUARDRAILS.md) |
 | Trash and restore state | [TRASH_RESTORE_STATE_GUARDRAILS.md](misc/TRASH_RESTORE_STATE_GUARDRAILS.md) |
 | Move/restore optimistic UI | [MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md](misc/MOVE_RESTORE_OPTIMISTIC_UI_GUARDRAILS.md) |
 | Project popups and People UI regressions | [PROJECT_POPUP_GUARDRAILS.md](misc/PROJECT_POPUP_GUARDRAILS.md) |
@@ -95,7 +96,17 @@ Useful focused checks when touching scan, query, trash, move, or restore:
 .venv/bin/python -m pytest tests/application/test_library_asset_query_service.py tests/cache/test_index_store_features.py tests/performance/test_refactor_performance_baseline.py -q
 .venv/bin/python -m pytest tests/application/test_temp_library_end_to_end.py tests/application/test_library_asset_lifecycle_service.py tests/services/test_asset_move_service.py tests/services/test_restoration_service.py -q
 .venv/bin/python -m pytest tests/gui/viewmodels/test_gallery_collection_store.py tests/gui/viewmodels/test_gallery_list_model_adapter.py tests/gui/coordinators/test_main_coordinator_pending_moves.py -q
+.venv/bin/python -m pytest tests/test_gallery_demand.py tests/test_asset_grid_scroll.py tests/gui/viewmodels/test_gallery_demand_coordinator.py tests/gui/viewmodels/test_gallery_thumbnail_hint_loader.py tests/test_thumbnail_cache_service.py tests/test_thumbnail_runtime_policy.py -q
 ```
+
+Gallery performance work has an additional opt-in real Qt event-loop benchmark:
+
+```bash
+IPHOTO_RUN_GALLERY_SCROLL_BENCHMARK=1 .venv/bin/python -m pytest tests/performance/test_gallery_scroll_qt_benchmark.py -q
+```
+
+Run it on the affected target platform with a populated L2 thumbnail cache.
+Timing results from macOS do not replace Windows or Linux validation.
 
 ---
 

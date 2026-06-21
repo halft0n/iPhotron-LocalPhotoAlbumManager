@@ -18,7 +18,7 @@ iPhotron is a **local-first photo manager**. It does not upload data to any clou
 |--------|-------|---------|
 | **Read** | User-selected library folders | Scan photos/videos, read metadata (EXIF, GPS) |
 | **Write** | Library folders | Create `.iphoto.album.json` manifests, `.ipo` sidecar files |
-| **Write** | `.iPhoto/` directory at library root | Global SQLite database (`global_index.db`), thumbnail cache |
+| **Write** | `.iPhoto/` directory at library root | Global SQLite database (`global_index.db`), thumbnail and People caches, durable People state |
 | **Write** | Selected original media file | Best-effort GPS metadata write-back after an explicit Assign Location action |
 | **Read/Write** | Application settings directory | User preferences (theme, export destination) |
 
@@ -57,10 +57,11 @@ iPhotron does **not** encrypt data at rest. The following files are stored in pl
 |------|--------|----------|
 | `.iphoto.album.json` | JSON | Album metadata: cover image, featured photos, sort order |
 | `*.ipo` | JSON | Edit parameters: light, color, B&W, crop, perspective adjustments |
-| `global_index.db` | SQLite | Asset metadata: file paths, timestamps, GPS coordinates, media types, location assignment metadata |
+| `global_index.db` | SQLite | Asset/index facts plus repository-backed user state such as favorites, hidden/trash flags, pinned/order data, and manual metadata |
 | `.iPhoto/faces/face_index.db` | SQLite | Rebuildable People runtime snapshot |
 | `.iPhoto/faces/face_state.db` | SQLite | Stable People decisions: names, covers, hidden flags, groups, ordering |
 | Thumbnail cache | Image files | Downscaled preview images |
+| `settings.json` | JSON | Theme, language, recent library, export destination, and other application preferences |
 
 **Rationale:** The data managed by iPhotron (album organization, edit parameters, file metadata) is non-sensitive in most contexts. Users who require encryption should use full-disk encryption (e.g., BitLocker, FileVault, LUKS).
 
@@ -78,7 +79,8 @@ iPhotron does **not** encrypt data at rest. The following files are stored in pl
 LibraryRoot/                          # User-selected photo library folder
 ├── .iPhoto/
 │   ├── global_index.db               # SQLite database (all asset metadata)
-│   ├── thumbs/                       # Thumbnail cache
+│   ├── cache/
+│   │   └── thumbs/                   # Rebuildable thumbnail cache
 │   └── faces/
 │       ├── face_index.db             # Rebuildable People runtime snapshot
 │       ├── face_state.db             # Stable People user decisions
@@ -93,13 +95,14 @@ LibraryRoot/                          # User-selected photo library folder
 
 ### Settings Storage
 
-User settings (theme preference, export destination) are stored via Qt's `QSettings` mechanism:
+User settings, including theme, language, export destination, and recent library
+state, are stored in a validated `settings.json` file:
 
 | Platform | Location |
 |----------|----------|
-| **Windows** | Registry: `HKEY_CURRENT_USER\Software\iPhoto` |
-| **macOS** | `~/Library/Preferences/com.iphoto.plist` |
-| **Linux** | `~/.config/iPhoto/iPhoto.conf` |
+| **Windows** | `%APPDATA%\iPhoto\settings.json` |
+| **macOS** | `~/Library/Application Support/iPhoto/settings.json` |
+| **Linux** | `$XDG_CONFIG_HOME/iPhoto/settings.json`, or `~/.config/iPhoto/settings.json` when `XDG_CONFIG_HOME` is unset |
 
 ---
 
@@ -113,6 +116,7 @@ User settings (theme preference, export destination) are stored via Qt's `QSetti
 | GPS coordinates in metadata | Location data (medium) | Stored in SQLite index and, when ExifTool write-back succeeds, in the original file metadata |
 | Album organization | Low | Stored in JSON manifests alongside photos |
 | Edit parameters | Low | Stored in `.ipo` sidecar files |
+| Durable library and People choices | Personal | Stored in `global_index.db` and `.iPhoto/faces/face_state.db`; include `.iPhoto/` in backups |
 
 ### Threat Scenarios
 
@@ -130,9 +134,9 @@ User settings (theme preference, export destination) are stored via Qt's `QSetti
 | | |
 |---|---|
 | **Threat** | An attacker modifies `global_index.db` |
-| **Impact** | Corrupted index leading to incorrect display; no data loss (rescannable) |
-| **Mitigation** | OS-level file permissions; iPhotron's automatic recovery (REINDEX → Salvage → Reset) |
-| **Recovery** | Re-scan the library to rebuild the database from filesystem |
+| **Impact** | Corrupted display/index facts and possible loss of repository-backed user choices if no backup exists |
+| **Mitigation** | OS-level file permissions, SQLite recovery, and regular backup of the complete `.iPhoto/` workspace |
+| **Recovery** | Re-scan rebuilds asset facts and thumbnails; restore `.iPhoto/` from backup to recover durable choices that cannot be inferred from media files |
 
 #### T3: Malicious Media Files
 

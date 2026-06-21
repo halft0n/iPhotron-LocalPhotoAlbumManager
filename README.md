@@ -103,6 +103,8 @@ Key highlights:
 - 🗂 Folder-native design — every folder *is* an album, no import needed.
 - ⚙️ Folder-local manifests record album metadata such as cover, featured items, and order.
 - ⚡ **SQLite-powered global database** for lightning-fast session-backed queries on massive libraries.
+- 🖼 Demand-driven Gallery scrolling with sparse asynchronous windows,
+  micro-thumbnail fallback, and memory-aware full-thumbnail prefetching.
 - 🧠 Smart incremental scanning with persistent SQLite index.
 - 🎥 Full **Live Photo** pairing and playback support.
 - 🗺 Optional map view that visualizes GPS metadata across all photos & videos and falls back gracefully when the maps extension is unavailable.
@@ -180,6 +182,15 @@ manager remains usable without installing the AI runtime, and People state is
 kept behind the library session so names, covers, hidden flags, groups, and
 manual faces survive rescans.
 ![People and groups interface](docs/picture/People%20%26%20Group.png)
+
+### ⚡ Large-Library Gallery
+Gallery browsing uses sparse asynchronous SQL windows instead of materializing
+an entire collection. Scroll intent drives separate visible, nearby guard, and
+speculative thumbnail lanes; fast bursts keep input responsive and use warmed
+micro thumbnails while full thumbnails are decoded away from the GUI thread.
+Memory and worker budgets adapt to the host platform and physical RAM, with
+generation-aware cancellation preventing old viewport work from repainting the
+current view.
 
 ### 🖼 Immersive Detail View
 An elegant viewer with a filmstrip navigator, floating playback bar for videos,

@@ -80,6 +80,8 @@ memory-aware thumbnail publishing.*
   backoff behavior.
 - Added a Qt gallery scroll performance benchmark covering warmed rows, next
   screen thumbnails, burst behavior, and display-bucket residency.
+- Documented the production sparse-window/thumbnail-demand architecture and a
+  focused Gallery scroll regression checklist under `docs/misc/`.
 
 ---
 
