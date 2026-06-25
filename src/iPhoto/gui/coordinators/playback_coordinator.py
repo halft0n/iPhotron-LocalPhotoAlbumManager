@@ -1315,6 +1315,11 @@ class PlaybackCoordinator(QObject):
             library_root = self._asset_model.store.library_root()
         if library_root is None:
             return
+        asset_rel = self._location_assignment_asset_rel(
+            presentation.path,
+            Path(library_root),
+            rel_value,
+        )
 
         self._location_search_timer.stop()
         self._pending_location_query = ""
@@ -1342,7 +1347,7 @@ class PlaybackCoordinator(QObject):
             )
             assignment = service.assign(
                 asset_path=presentation.path,
-                asset_rel=rel_value,
+                asset_rel=asset_rel,
                 display_name=display_name,
                 latitude=float(suggestion_obj.latitude),
                 longitude=float(suggestion_obj.longitude),
@@ -1384,6 +1389,26 @@ class PlaybackCoordinator(QObject):
             self._location_assign_path = None
             if self._info_panel is not None:
                 self._info_panel.set_location_busy(False)
+
+    @staticmethod
+    def _location_assignment_asset_rel(
+        asset_path: Path,
+        library_root: Path,
+        fallback_rel: str,
+    ) -> str:
+        try:
+            return (
+                Path(asset_path)
+                .resolve()
+                .relative_to(Path(library_root).resolve())
+                .as_posix()
+            )
+        except (OSError, RuntimeError, ValueError):
+            pass
+        try:
+            return Path(asset_path).relative_to(Path(library_root)).as_posix()
+        except ValueError:
+            return fallback_rel.strip()
 
     def _release_current_video_for_location_write(self, presentation: DetailPresentation) -> None:
         if not presentation.is_video:

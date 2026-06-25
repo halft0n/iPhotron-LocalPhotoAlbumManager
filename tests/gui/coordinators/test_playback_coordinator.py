@@ -1003,6 +1003,109 @@ def test_location_assignment_restore_reloads_video_when_same_asset_remains() -> 
     assert coordinator._location_released_video_position_ms is None
 
 
+@pytest.mark.parametrize(
+    ("asset_path", "library_root", "presentation_rel", "expected_rel"),
+    [
+        (
+            Path("/fake/library/Album/photo.jpg"),
+            Path("/fake/library"),
+            "photo.jpg",
+            "Album/photo.jpg",
+        ),
+        (
+            Path("/fake/library/photo.jpg"),
+            Path("/fake/library"),
+            "photo.jpg",
+            "photo.jpg",
+        ),
+        (
+            Path("/external/photo.jpg"),
+            Path("/fake/library"),
+            "photo.jpg",
+            "photo.jpg",
+        ),
+    ],
+)
+def test_location_confirm_passes_library_relative_rel_to_assignment_service(
+    monkeypatch: pytest.MonkeyPatch,
+    asset_path: Path,
+    library_root: Path,
+    presentation_rel: str,
+    expected_rel: str,
+) -> None:
+    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
+    presentation = _make_presentation(
+        path=str(asset_path),
+        is_video=False,
+        info_panel_visible=True,
+    )
+    presentation.info["rel"] = presentation_rel
+    coordinator._current_presentation = presentation
+    coordinator._refresh_location_extension_state = Mock(return_value=True)
+    coordinator._location_assign_inflight = False
+    coordinator._library_manager = None
+    store = Mock(library_root=Mock(return_value=library_root))
+    coordinator._asset_model = Mock(
+        metadata_for_path=Mock(return_value={}),
+        store=store,
+    )
+    coordinator._location_search_timer = Mock(stop=Mock())
+    coordinator._pending_location_query = ""
+    coordinator._location_search_target_path = None
+    coordinator._location_search_controller = Mock(reset=Mock())
+    coordinator._info_panel = Mock()
+    coordinator._location_write_queue = Mock(enqueue=Mock())
+    coordinator._location_write_jobs_by_path = {}
+    coordinator._event_bus = None
+    coordinator._project_location_assignment = Mock()
+
+    suggestion = SearchSuggestion(
+        display_name="Munich",
+        secondary_text="Germany",
+        longitude=11.576124,
+        latitude=48.137154,
+        source_kind="test",
+        match_kind="exact",
+    )
+    write_job = SimpleNamespace(job_id="job-1")
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeLocationAssignmentService:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
+        def assign(self, **kwargs) -> SimpleNamespace:
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(
+                asset_path=kwargs["asset_path"],
+                display_name=kwargs["display_name"],
+                metadata={},
+                write_job=write_job,
+            )
+
+    monkeypatch.setattr(
+        playback_coordinator_module,
+        "IndexStoreLocationAssignmentRepository",
+        lambda _root: Mock(),
+    )
+    monkeypatch.setattr(
+        playback_coordinator_module,
+        "LocationAssignmentService",
+        _FakeLocationAssignmentService,
+    )
+
+    PlaybackCoordinator._handle_location_confirm_requested(
+        coordinator,
+        "Munich",
+        suggestion,
+    )
+
+    assert captured_kwargs["asset_path"] == asset_path
+    assert captured_kwargs["asset_rel"] == expected_rel
+    coordinator._project_location_assignment.assert_called_once()
+    coordinator._location_write_queue.enqueue.assert_called_once_with(write_job)
+
+
 def test_location_confirm_updates_current_header_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
     coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
     asset_path = Path("/fake/video.mp4")

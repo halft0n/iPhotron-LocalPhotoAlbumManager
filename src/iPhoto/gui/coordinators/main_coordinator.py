@@ -657,6 +657,9 @@ class MainCoordinator(QObject):
         root = self._library_root()
         self._logger.debug("_on_library_tree_updated: root=%s", root)
         self._context.asset_runtime.bind_library_root(root)
+        location_queue = getattr(self, "_location_write_queue", None)
+        if location_queue is not None:
+            location_queue.bind_library_root(root)
         self._asset_list_vm.rebind_asset_query_service(
             self._asset_query_service(),
             root,
