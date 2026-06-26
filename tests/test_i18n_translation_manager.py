@@ -107,6 +107,10 @@ def test_translation_manager_reads_languages_and_switches_to_chinese(
     assert QCoreApplication.translate("GalleryMenu", "Export", None) == "导出"
     assert QCoreApplication.translate("GalleryContextMenu", "Deleted", None) == "已删除"
     assert QCoreApplication.translate("DetailPage", "Rotate Left", None) == "向左旋转"
+    assert (
+        QCoreApplication.translate("PlaybackCoordinator", "Writing data, please wait...", None)
+        == "正在写入数据，请稍候…"
+    )
     assert QCoreApplication.translate("PlayerBar", "Volume", None) == "音量"
     assert QCoreApplication.translate("EditSidebar", "Light", None) == "光效"
     assert QCoreApplication.translate("EditLight", "Brilliance", None) == "鲜明度"
