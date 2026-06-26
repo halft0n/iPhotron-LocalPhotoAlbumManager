@@ -176,8 +176,6 @@ class PlaybackCoordinator(QObject):
         )
         self._location_assign_inflight = False
         self._location_assign_path: Path | None = None
-        self._location_preview_path: Path | None = None
-        self._location_preview_metadata: dict[str, Any] | None = None
         self._confirmed_location_metadata: dict[Path, dict[str, Any]] = {}
         self._location_released_video_path: Path | None = None
         self._location_released_video_was_playing = False
@@ -492,12 +490,6 @@ class PlaybackCoordinator(QObject):
             presentation = self._apply_location_metadata_to_presentation(
                 presentation,
                 confirmed_metadata,
-            )
-        preview_metadata = self._location_preview_metadata_for_path(presentation.path)
-        if preview_metadata is not None:
-            presentation = self._apply_location_metadata_to_presentation(
-                presentation,
-                preview_metadata,
             )
         if not self._router.is_detail_view_active():
             self._clear_play_profile(presentation.row)
@@ -1027,15 +1019,6 @@ class PlaybackCoordinator(QObject):
             if cached:
                 local_info = self._merge_info_panel_metadata(local_info, cached)
         current_path = Path(path_key) if path_key is not None else None
-        location_preview_path = getattr(self, "_location_preview_path", None)
-        location_preview_metadata = getattr(self, "_location_preview_metadata", None)
-        if (
-            current_path is not None
-            and location_preview_path is not None
-            and location_preview_metadata is not None
-            and current_path == location_preview_path
-        ):
-            local_info = self._merge_info_panel_metadata(local_info, location_preview_metadata)
         needs_enrichment = self._info_panel_metadata_needs_enrichment(local_info)
         should_queue_enrichment = bool(
             path_key is not None
@@ -1439,69 +1422,6 @@ class PlaybackCoordinator(QObject):
         merged.update(metadata)
         return merged
 
-    @Slot(object)
-    def _handle_location_assignment_ready(self, result: object) -> None:
-        asset_path = getattr(result, "asset_path", None)
-        metadata = getattr(result, "metadata", None)
-        if not isinstance(asset_path, Path) or not isinstance(metadata, dict):
-            return
-
-        file_write_error = getattr(result, "file_write_error", None)
-        if isinstance(file_write_error, str) and file_write_error.strip():
-            LOGGER.warning(
-                "Location saved in the library, but GPS metadata was not written to %s: %s",
-                asset_path,
-                file_write_error,
-            )
-            if self._is_missing_exiftool_error(file_write_error):
-                self._queue_location_exiftool_missing_warning()
-            else:
-                self._queue_location_file_write_warning(file_write_error)
-
-        row = self._asset_model.row_for_path(asset_path)
-        if row is not None:
-            self._asset_model.store.update_asset_metadata(row, dict(metadata))
-
-        path_key = str(asset_path)
-        if len(self._info_panel_metadata_cache) >= _INFO_PANEL_METADATA_CACHE_MAX:
-            evict_key = next(iter(self._info_panel_metadata_cache))
-            del self._info_panel_metadata_cache[evict_key]
-            self._info_panel_metadata_attempted.discard(evict_key)
-        self._info_panel_metadata_cache[path_key] = dict(metadata)
-        self._info_panel_metadata_attempted.add(path_key)
-        self._info_panel_metadata_inflight.discard(path_key)
-        should_clear_location_preview = self._location_preview_path == asset_path
-        self._remember_confirmed_location_metadata(asset_path, metadata)
-
-        self._apply_location_assignment_to_current_presentation(
-            asset_path,
-            metadata,
-            display_name=getattr(result, "display_name", None),
-            refresh_info_panel=False,
-        )
-        if not self._is_location_video_write_inflight(asset_path):
-            self._restore_video_released_for_location_write()
-        if getattr(self, "_location_assign_path", None) == asset_path:
-            self._location_assign_inflight = False
-            self._location_assign_path = None
-        if should_clear_location_preview:
-            self._location_preview_path = None
-            self._location_preview_metadata = None
-
-        library_manager = getattr(self, "_library_manager", None)
-        invalidate = getattr(library_manager, "invalidate_geotagged_assets_cache", None)
-        if callable(invalidate):
-            try:
-                invalidate(emit_tree_updated=False)
-            except Exception:  # noqa: BLE001
-                LOGGER.warning("Failed to refresh geotagged asset caches", exc_info=True)
-        invalidate_location_session = getattr(self, "_location_session_invalidator", None)
-        if callable(invalidate_location_session):
-            try:
-                invalidate_location_session()
-            except Exception:  # noqa: BLE001
-                LOGGER.warning("Failed to invalidate cached location-session data", exc_info=True)
-
     def _remember_confirmed_location_metadata(
         self,
         path: Path,
@@ -1527,13 +1447,6 @@ class PlaybackCoordinator(QObject):
         confirmed = getattr(self, "_confirmed_location_metadata", None)
         if isinstance(confirmed, dict):
             confirmed.clear()
-
-    def _location_preview_metadata_for_path(self, path: Path) -> dict[str, Any] | None:
-        preview_path = getattr(self, "_location_preview_path", None)
-        preview_metadata = getattr(self, "_location_preview_metadata", None)
-        if preview_path == Path(path) and isinstance(preview_metadata, dict):
-            return preview_metadata
-        return None
 
     def _apply_location_metadata_to_presentation(
         self,
@@ -1673,27 +1586,6 @@ class PlaybackCoordinator(QObject):
             self._queue_location_file_write_warning(message)
         self._complete_location_video_file_write(result.asset_path)
 
-    @Slot(object)
-    def _handle_location_assignment_file_write_finished(self, path: object) -> None:
-        if not isinstance(path, Path):
-            return
-        self._complete_location_video_file_write(path)
-
-    @Slot(object, str)
-    def _handle_location_assignment_file_write_error(self, path: object, message: str) -> None:
-        if not isinstance(path, Path):
-            return
-        LOGGER.warning(
-            "Location saved in the library, but GPS metadata was not written to %s: %s",
-            path,
-            message,
-        )
-        if self._is_missing_exiftool_error(message):
-            self._queue_location_exiftool_missing_warning()
-        else:
-            self._queue_location_file_write_warning(message)
-        self._complete_location_video_file_write(path)
-
     @Slot(str)
     def _handle_location_assignment_error(self, message: str) -> None:
         LOGGER.warning("Failed to assign location: %s", message)
@@ -1701,31 +1593,9 @@ class PlaybackCoordinator(QObject):
         if location_assign_path is not None:
             self._allow_location_video_loading(location_assign_path)
         self._restore_video_released_for_location_write()
-        if self._location_preview_path == location_assign_path:
-            self._location_preview_path = None
-            self._location_preview_metadata = None
-            detail_vm = getattr(self, "_detail_vm", None)
-            refresh_current = getattr(detail_vm, "refresh_current", None)
-            if callable(refresh_current):
-                refresh_current()
         info_panel = getattr(self, "_info_panel", None)
         if info_panel is not None:
             info_panel.set_location_busy(False)
-
-    @Slot()
-    def _handle_location_assignment_finished(self) -> None:
-        location_assign_path = getattr(self, "_location_assign_path", None)
-        if (
-            location_assign_path is not None
-            and not self._is_location_video_write_inflight(location_assign_path)
-        ):
-            self._restore_video_released_for_location_write()
-        self._location_assign_inflight = False
-        self._location_assign_path = None
-        info_panel = getattr(self, "_info_panel", None)
-        if info_panel is None:
-            return
-        info_panel.set_location_busy(False)
 
     def _refresh_info_panel_faces(self, asset_id: str | None) -> None:
         info_panel = getattr(self, "_info_panel", None)

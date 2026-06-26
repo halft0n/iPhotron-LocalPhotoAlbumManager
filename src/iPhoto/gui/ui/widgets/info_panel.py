@@ -379,7 +379,6 @@ class InfoPanel(QWidget):
     faceMoveRequested = Signal(object, str)
     faceMoveToNewPersonRequested = Signal(object, str)
     locationQueryChanged = Signal(str)
-    locationSuggestionActivated = Signal(object)
     locationConfirmRequested = Signal(str, object)
     downloadMapExtensionRequested = Signal()
     _DRAG_EVENT_TYPES = frozenset(
@@ -808,26 +807,6 @@ class InfoPanel(QWidget):
             self._assigning_button_text() if busy else self._confirm_button_text()
         )
 
-    def preview_location(self, display_name: str, latitude: float, longitude: float) -> None:
-        metadata = dict(self._metadata or {})
-        metadata["location"] = display_name
-        metadata["place"] = display_name
-        metadata["gps"] = {
-            "lat": float(latitude),
-            "lon": float(longitude),
-        }
-        self._metadata = metadata
-        self._updating_location_ui = True
-        try:
-            self._location_editor.setText(display_name)
-        finally:
-            self._updating_location_ui = False
-        self._location_dirty = False
-        self._location_editor.setPlaceholderText("")
-        self._clear_location_results()
-        self._show_location_map(float(latitude), float(longitude))
-        self._refresh_or_schedule_panel_geometry()
-
     def shutdown(self) -> None:
         self._clear_location_results()
         self._location_map.shutdown()
@@ -1021,7 +1000,6 @@ class InfoPanel(QWidget):
         if not self._apply_location_suggestion_for_results_row(
             row,
             update_editor=False,
-            emit_activation=True,
         ):
             self._selected_location_suggestion = None
             self._location_confirm_button.setEnabled(False)
@@ -1038,7 +1016,6 @@ class InfoPanel(QWidget):
         self._apply_location_suggestion_for_results_row(
             row,
             update_editor=update_editor,
-            emit_activation=True,
         )
 
     def _apply_location_suggestion_for_results_row(
@@ -1046,7 +1023,6 @@ class InfoPanel(QWidget):
         row: int,
         *,
         update_editor: bool,
-        emit_activation: bool,
     ) -> bool:
         if row < 0 or row >= self._location_results.count():
             return False
@@ -1057,7 +1033,6 @@ class InfoPanel(QWidget):
         return self._apply_location_suggestion(
             index,
             update_editor=update_editor,
-            emit_activation=emit_activation,
         )
 
     def _apply_location_suggestion(
@@ -1065,7 +1040,6 @@ class InfoPanel(QWidget):
         index: int,
         *,
         update_editor: bool,
-        emit_activation: bool,
     ) -> bool:
         if index < 0 or index >= len(self._location_suggestions):
             return False
@@ -1081,8 +1055,6 @@ class InfoPanel(QWidget):
                     self._updating_location_ui = False
                 self._location_editor.setFocus(Qt.FocusReason.OtherFocusReason)
             self._location_dirty = True
-        if emit_activation:
-            self.locationSuggestionActivated.emit(suggestion)
         self._location_confirm_button.setEnabled(True)
         return True
 
@@ -1090,7 +1062,6 @@ class InfoPanel(QWidget):
         self,
         *,
         update_editor: bool,
-        emit_activation: bool,
     ) -> bool:
         if self._location_results.count() <= 0:
             return False
@@ -1100,7 +1071,6 @@ class InfoPanel(QWidget):
         return self._apply_location_suggestion_for_results_row(
             row,
             update_editor=update_editor,
-            emit_activation=emit_activation,
         )
 
     def _queue_location_confirm_requested(self) -> None:
@@ -1115,7 +1085,6 @@ class InfoPanel(QWidget):
             return
         self._apply_current_location_suggestion(
             update_editor=True,
-            emit_activation=False,
         )
         query = self._location_editor.text().strip()
         if not query:
@@ -1232,7 +1201,6 @@ class InfoPanel(QWidget):
         self._apply_location_suggestion_for_results_row(
             current_row,
             update_editor=True,
-            emit_activation=True,
         )
         return True
 
@@ -1241,7 +1209,6 @@ class InfoPanel(QWidget):
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._apply_current_location_suggestion(
                 update_editor=True,
-                emit_activation=False,
             )
             self._queue_location_confirm_requested()
             return True
@@ -1266,7 +1233,6 @@ class InfoPanel(QWidget):
         self._apply_location_suggestion_for_results_row(
             current_row,
             update_editor=True,
-            emit_activation=True,
         )
         self._location_editor.setFocus(Qt.FocusReason.OtherFocusReason)
         return True

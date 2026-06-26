@@ -28,19 +28,6 @@ class LocationWriteJobRecord:
         return self.media_kind == "video"
 
 
-class MetadataWriteJobRepositoryPort(Protocol):
-    def create_location_job(
-        self,
-        *,
-        asset_rel: str,
-        asset_path: Path,
-        gps: dict[str, float],
-        location: str,
-        is_video: bool,
-    ) -> LocationWriteJobRecord:
-        """Create a durable original-file metadata write job."""
-
-
 class LocationAssignmentRepositoryPort(Protocol):
     def assign_location(
         self,

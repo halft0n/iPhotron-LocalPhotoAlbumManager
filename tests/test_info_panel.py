@@ -1392,7 +1392,7 @@ def test_info_panel_content_update_batches_visible_geometry_refresh(
     panel.close()
 
 
-def test_info_panel_location_preview_reflow_stabilizes_on_first_event_pass(
+def test_info_panel_location_map_reflow_stabilizes_on_first_event_pass(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1405,11 +1405,15 @@ def test_info_panel_location_preview_reflow_stabilizes_on_first_event_pass(
 
     panel = InfoPanel()
     panel.set_location_capability(enabled=True)
-    panel.set_asset_metadata({"rel": "map.jpg", "name": "map.jpg"})
+    panel.set_asset_metadata(
+        {
+            "rel": "map.jpg",
+            "name": "map.jpg",
+            "location": "Munich",
+            "gps": {"lat": 48.137154, "lon": 11.576124},
+        }
+    )
     panel.show()
-    qapp.processEvents()
-
-    panel.preview_location("Munich", 48.137154, 11.576124)
     qapp.processEvents()
 
     first_height = panel.height()

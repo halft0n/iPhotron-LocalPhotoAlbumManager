@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,53 +18,6 @@ class MetadataWriteJobRepository:
 
     def __init__(self, library_root: Path) -> None:
         self._library_root = Path(library_root)
-
-    def create_location_job(
-        self,
-        *,
-        asset_rel: str,
-        asset_path: Path,
-        gps: dict[str, float],
-        location: str,
-        is_video: bool,
-    ) -> LocationWriteJobRecord:
-        now = _utc_ms()
-        job = LocationWriteJobRecord(
-            job_id=str(uuid.uuid4()),
-            asset_rel=str(asset_rel),
-            asset_path=Path(asset_path),
-            gps={"lat": float(gps["lat"]), "lon": float(gps["lon"])},
-            location=str(location or ""),
-            media_kind="video" if is_video else "image",
-            status="queued",
-            attempts=0,
-            last_error=None,
-        )
-        repo = get_global_repository(self._library_root)
-        with repo.transaction(begin_mode="IMMEDIATE") as conn:
-            conn.execute(
-                """
-                INSERT INTO metadata_write_jobs (
-                    job_id, asset_rel, asset_path, gps_json, location, media_kind,
-                    status, attempts, last_error, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    job.job_id,
-                    job.asset_rel,
-                    str(job.asset_path),
-                    json.dumps(job.gps, ensure_ascii=False),
-                    job.location,
-                    job.media_kind,
-                    job.status,
-                    job.attempts,
-                    job.last_error,
-                    now,
-                    now,
-                ),
-            )
-        return job
 
     def list_recoverable_jobs(self) -> list[LocationWriteJobRecord]:
         repo = get_global_repository(self._library_root)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,10 +9,10 @@ import pytest
 
 pytest.importorskip("PySide6", reason="PySide6 is required for playback coordinator tests", exc_type=ImportError)
 
-from iPhoto.application.services.assign_location_service import AssignedLocationResult
 from iPhoto.application.ports import LocationWriteJobRecord
 from iPhoto.gui.coordinators import playback_coordinator as playback_coordinator_module
 from iPhoto.gui.coordinators.playback_coordinator import PlaybackCoordinator
+from iPhoto.gui.services.location_file_write_queue import LocationFileWriteResult
 from iPhoto.gui.ui.tasks.info_panel_metadata_worker import InfoPanelMetadataResult
 from iPhoto.gui.viewmodels.detail_viewmodel import DetailPresentation
 from iPhoto.people.repository import AssetFaceAnnotation
@@ -1262,186 +1261,6 @@ def test_location_confirm_updates_current_header_immediately(monkeypatch: pytest
     assert coordinator._location_write_jobs_by_path[asset_path] == "job-1"
 
 
-def test_presentation_changed_keeps_pending_location_preview_in_header() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    coordinator._current_presentation = None
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    coordinator._asset_model = Mock(set_current_row=Mock())
-    coordinator.assetChanged = Mock(emit=Mock())
-    coordinator._update_header = Mock()
-    coordinator._sync_filmstrip_selection = Mock()
-    coordinator._render_presentation = Mock()
-    coordinator._clear_play_profile = Mock()
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = {
-        "location": "Munich",
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-    }
-
-    PlaybackCoordinator._handle_presentation_changed(
-        coordinator,
-        _make_presentation(path=str(asset_path), is_video=True),
-    )
-
-    updated = coordinator._current_presentation
-    assert updated.location == "Munich"
-    assert updated.info["location"] == "Munich"
-    coordinator._update_header.assert_called_once_with(updated)
-
-
-def test_presentation_changed_applies_preview_after_confirmed_location() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    coordinator._current_presentation = None
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    coordinator._asset_model = Mock(set_current_row=Mock())
-    coordinator.assetChanged = Mock(emit=Mock())
-    coordinator._update_header = Mock()
-    coordinator._sync_filmstrip_selection = Mock()
-    coordinator._render_presentation = Mock()
-    coordinator._clear_play_profile = Mock()
-    coordinator._confirmed_location_metadata = {
-        asset_path: {
-            "location": "Munich",
-            "gps": {"lat": 48.137154, "lon": 11.576124},
-        }
-    }
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = {
-        "location": "Berlin",
-        "gps": {"lat": 52.52, "lon": 13.405},
-    }
-
-    PlaybackCoordinator._handle_presentation_changed(
-        coordinator,
-        replace(
-            _make_presentation(path=str(asset_path), is_video=True),
-            location=None,
-        ),
-    )
-
-    updated = coordinator._current_presentation
-    assert updated.location == "Berlin"
-    assert updated.info["location"] == "Berlin"
-    assert updated.info["gps"] == {"lat": 52.52, "lon": 13.405}
-
-
-def test_location_assignment_ready_refreshes_current_video_header_before_restore() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    metadata = {
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-        "location": "Munich",
-        "location_name": "Munich",
-        "codec": "hevc",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(row_for_path=Mock(return_value=4), store=store)
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    coordinator._info_panel = Mock()
-    coordinator._refresh_info_panel = Mock()
-    coordinator._current_presentation = _make_presentation(
-        path=str(asset_path),
-        is_video=True,
-        info_panel_visible=True,
-    )
-    coordinator._update_header = Mock()
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    video_area = Mock(pause=Mock(), seek=Mock())
-    coordinator._player_view = Mock(video_area=video_area)
-    coordinator._render_presentation = Mock()
-    coordinator._location_released_video_path = asset_path
-    coordinator._location_released_video_was_playing = False
-    coordinator._location_released_video_position_ms = 1234
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="video.mp4",
-        display_name="Munich",
-        gps={"lat": 48.137154, "lon": 11.576124},
-        metadata=metadata,
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    updated = coordinator._current_presentation
-    assert updated is not None
-    assert updated.location == "Munich"
-    assert updated.info["location"] == "Munich"
-    assert updated.info["gps"] == {"lat": 48.137154, "lon": 11.576124}
-    coordinator._update_header.assert_called_with(updated)
-    coordinator._refresh_info_panel.assert_not_called()
-    coordinator._render_presentation.assert_called_once_with(updated)
-    video_area.seek.assert_called_once_with(1234)
-    video_area.pause.assert_called_once_with()
-    coordinator._detail_vm.refresh_current.assert_not_called()
-
-
-def test_location_assignment_ready_keeps_header_when_stale_presentation_arrives() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    metadata = {
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-        "location": "Munich",
-        "location_name": "Munich",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(
-        row_for_path=Mock(return_value=4),
-        set_current_row=Mock(),
-        store=store,
-    )
-    coordinator.assetChanged = Mock(emit=Mock())
-    coordinator._sync_filmstrip_selection = Mock()
-    coordinator._update_favorite_icon = Mock()
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._confirmed_location_metadata = {}
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    coordinator._info_panel = None
-    coordinator._current_presentation = _make_presentation(path=str(asset_path), is_video=True)
-    coordinator._update_header = Mock()
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    coordinator._render_presentation = Mock()
-    coordinator._clear_play_profile = Mock()
-    coordinator._location_released_video_path = None
-    coordinator._location_video_write_inflight_paths = set()
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="video.mp4",
-        display_name="Munich",
-        gps={"lat": 48.137154, "lon": 11.576124},
-        metadata=metadata,
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-    stale_presentation = replace(
-        _make_presentation(path=str(asset_path), is_video=True),
-        location=None,
-    )
-    PlaybackCoordinator._handle_presentation_changed(coordinator, stale_presentation)
-
-    assert coordinator._location_preview_path is None
-    assert coordinator._location_preview_metadata is None
-    assert coordinator._confirmed_location_metadata[asset_path]["location"] == "Munich"
-    assert coordinator._current_presentation.location == "Munich"
-    assert coordinator._current_presentation.info["location"] == "Munich"
-    assert coordinator._update_header.call_args.args[0].location == "Munich"
-
-
 def test_confirmed_location_protects_repeated_stale_presentations_for_detail_session() -> None:
     coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
     asset_path = Path("/fake/video.mp4")
@@ -1458,8 +1277,6 @@ def test_confirmed_location_protects_repeated_stale_presentations_for_detail_ses
     coordinator._confirmed_location_metadata = {
         asset_path: {"location": "Munich"}
     }
-    coordinator._location_preview_path = None
-    coordinator._location_preview_metadata = None
 
     stale_presentation = replace(
         _make_presentation(path=str(asset_path), is_video=True),
@@ -1486,8 +1303,6 @@ def test_confirmed_location_does_not_apply_to_another_asset() -> None:
     coordinator._confirmed_location_metadata = {
         Path("/fake/video.mp4"): {"location": "Munich"}
     }
-    coordinator._location_preview_path = None
-    coordinator._location_preview_metadata = None
     other_presentation = replace(
         _make_presentation(path="/fake/other-video.mp4", is_video=True),
         location=None,
@@ -1497,346 +1312,6 @@ def test_confirmed_location_does_not_apply_to_another_asset() -> None:
 
     assert coordinator._current_presentation.location is None
     assert "location" not in coordinator._current_presentation.info
-
-
-def test_location_assignment_ready_does_not_request_extra_presentation_refresh() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    metadata = {
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-        "location": "Munich",
-        "location_name": "Munich",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(
-        row_for_path=Mock(return_value=4),
-        set_current_row=Mock(),
-        store=store,
-    )
-    coordinator.assetChanged = Mock(emit=Mock())
-    coordinator._sync_filmstrip_selection = Mock()
-    coordinator._update_favorite_icon = Mock()
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    coordinator._info_panel = None
-    coordinator._current_presentation = _make_presentation(
-        path=str(asset_path),
-        is_video=True,
-    )
-    coordinator._update_header = Mock()
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    coordinator._player_view = Mock(video_area=Mock())
-    coordinator._render_presentation = Mock()
-    coordinator._clear_play_profile = Mock()
-    coordinator._location_released_video_path = None
-
-    stale_presentation = _make_presentation(path=str(asset_path), is_video=True)
-    coordinator._detail_vm = Mock(
-        refresh_current=Mock(
-            side_effect=lambda: PlaybackCoordinator._handle_presentation_changed(
-                coordinator,
-                stale_presentation,
-            )
-        )
-    )
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="video.mp4",
-        display_name="Munich",
-        gps={"lat": 48.137154, "lon": 11.576124},
-        metadata=metadata,
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    assert coordinator._current_presentation.location == "Munich"
-    assert coordinator._location_preview_path is None
-    assert coordinator._location_preview_metadata is None
-    assert coordinator._update_header.call_args.args[0].location == "Munich"
-    coordinator._detail_vm.refresh_current.assert_not_called()
-
-
-def test_location_assignment_error_reverts_pending_header_preview() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    coordinator._location_assign_path = asset_path
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = {
-        "location": "Munich",
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-    }
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._location_released_video_path = None
-    coordinator._info_panel = Mock(isVisible=Mock(return_value=True), set_location_busy=Mock())
-    coordinator._current_presentation = _make_presentation(path=str(asset_path), is_video=True)
-    coordinator._refresh_info_panel = Mock()
-
-    PlaybackCoordinator._handle_location_assignment_error(coordinator, "database unavailable")
-
-    assert coordinator._location_preview_path is None
-    assert coordinator._location_preview_metadata is None
-    coordinator._detail_vm.refresh_current.assert_called_once_with()
-    coordinator._info_panel.set_location_busy.assert_called_once_with(False)
-    coordinator._refresh_info_panel.assert_not_called()
-
-
-def test_location_assignment_error_restores_previous_confirmed_location() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    coordinator._location_assign_path = asset_path
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = {"location": "Berlin"}
-    coordinator._confirmed_location_metadata = {asset_path: {"location": "Munich"}}
-    coordinator._location_video_write_inflight_paths = set()
-    coordinator._location_released_video_path = None
-    coordinator._info_panel = None
-    coordinator._current_presentation = replace(
-        _make_presentation(path=str(asset_path), is_video=True),
-        location="Berlin",
-    )
-    coordinator._router = Mock(is_detail_view_active=Mock(return_value=True))
-    coordinator._asset_model = Mock(set_current_row=Mock())
-    coordinator.assetChanged = Mock(emit=Mock())
-    coordinator._update_header = Mock()
-    coordinator._sync_filmstrip_selection = Mock()
-    coordinator._render_presentation = Mock()
-    coordinator._update_favorite_icon = Mock()
-    coordinator._clear_play_profile = Mock()
-    stale_presentation = replace(
-        _make_presentation(path=str(asset_path), is_video=True),
-        location=None,
-    )
-    coordinator._detail_vm = Mock(
-        refresh_current=Mock(
-            side_effect=lambda: PlaybackCoordinator._handle_presentation_changed(
-                coordinator,
-                stale_presentation,
-            )
-        )
-    )
-
-    PlaybackCoordinator._handle_location_assignment_error(coordinator, "database unavailable")
-
-    assert coordinator._location_preview_path is None
-    assert coordinator._location_preview_metadata is None
-    assert coordinator._current_presentation.location == "Munich"
-    assert coordinator._current_presentation.info["location"] == "Munich"
-
-
-def test_location_assignment_ready_keeps_current_video_released_while_file_write_inflight() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/video.mp4")
-    metadata = {
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-        "location": "Munich",
-        "location_name": "Munich",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(row_for_path=Mock(return_value=4), store=store)
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._location_assign_inflight = True
-    coordinator._location_assign_path = asset_path
-    coordinator._location_video_write_inflight_paths = {asset_path}
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    coordinator._info_panel = Mock()
-    coordinator._refresh_info_panel = Mock()
-    coordinator._current_presentation = _make_presentation(
-        path=str(asset_path),
-        is_video=True,
-        info_panel_visible=True,
-    )
-    coordinator._update_header = Mock()
-    coordinator._render_presentation = Mock()
-    coordinator._location_released_video_path = asset_path
-    coordinator._location_released_video_was_playing = False
-    coordinator._location_released_video_position_ms = 1234
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="video.mp4",
-        display_name="Munich",
-        gps={"lat": 48.137154, "lon": 11.576124},
-        metadata=metadata,
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    assert coordinator._current_presentation.location == "Munich"
-    assert coordinator._location_assign_inflight is False
-    assert coordinator._location_assign_path is None
-    assert coordinator._location_released_video_path == asset_path
-    coordinator._render_presentation.assert_not_called()
-    coordinator._detail_vm.refresh_current.assert_not_called()
-
-
-def test_location_assignment_ready_ignores_non_current_asset_for_header_refresh() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/other-video.mp4")
-    metadata = {
-        "gps": {"lat": 48.137154, "lon": 11.576124},
-        "location": "Munich",
-        "location_name": "Munich",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(row_for_path=Mock(return_value=4), store=store)
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = None
-    coordinator._location_preview_metadata = None
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    coordinator._info_panel = None
-    coordinator._current_presentation = _make_presentation(
-        path="/fake/current-video.mp4",
-        is_video=True,
-    )
-    coordinator._update_header = Mock()
-    coordinator._render_presentation = Mock()
-    coordinator._location_released_video_path = None
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="other-video.mp4",
-        display_name="Munich",
-        gps={"lat": 48.137154, "lon": 11.576124},
-        metadata=metadata,
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    assert coordinator._current_presentation.location == "Paris"
-    coordinator._update_header.assert_not_called()
-    coordinator._render_presentation.assert_not_called()
-    coordinator._detail_vm.refresh_current.assert_not_called()
-
-
-def test_location_assignment_ready_with_file_write_error_still_updates_library_state(
-    caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/photo.jpg")
-    metadata = {
-        "gps": {"lat": 48.8566, "lon": 2.3522},
-        "location": "Paris",
-        "location_name": "Paris",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(row_for_path=Mock(return_value=4), store=store)
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    popup_parent = Mock()
-    coordinator._info_panel = Mock(parentWidget=Mock(return_value=popup_parent))
-    show_warning = Mock()
-    monkeypatch.setattr(playback_coordinator_module.dialogs, "show_warning", show_warning)
-    coordinator._queue_location_exiftool_missing_warning = Mock(
-        side_effect=lambda: PlaybackCoordinator._show_location_exiftool_missing_warning(
-            coordinator
-        )
-    )
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="photo.jpg",
-        display_name="Paris",
-        gps={"lat": 48.8566, "lon": 2.3522},
-        metadata=metadata,
-        file_write_error="exiftool executable not found",
-    )
-
-    with caplog.at_level(logging.WARNING, logger="iPhoto.gui.coordinators.playback_coordinator"):
-        PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    store.update_asset_metadata.assert_called_once_with(4, metadata)
-    assert coordinator._info_panel_metadata_cache[str(asset_path)] == metadata
-    assert coordinator._info_panel_metadata_attempted == {str(asset_path)}
-    assert coordinator._info_panel_metadata_inflight == set()
-    assert coordinator._location_preview_path is None
-    assert coordinator._location_preview_metadata is None
-    coordinator._detail_vm.refresh_current.assert_not_called()
-    assert "GPS metadata was not written" in caplog.text
-    coordinator._queue_location_exiftool_missing_warning.assert_called_once_with()
-    show_warning.assert_called_once_with(
-        popup_parent,
-        playback_coordinator_module._LOCATION_EXIFTOOL_LIMITED_MESSAGE,
-        title=playback_coordinator_module._LOCATION_EXIFTOOL_LIMITED_TITLE,
-    )
-
-
-def test_location_assignment_ready_with_non_missing_file_write_error_warns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    asset_path = Path("/fake/photo.jpg")
-    metadata = {
-        "gps": {"lat": 48.8566, "lon": 2.3522},
-        "location": "Paris",
-        "location_name": "Paris",
-    }
-    store = Mock()
-    coordinator._asset_model = Mock(row_for_path=Mock(return_value=4), store=store)
-    coordinator._info_panel_metadata_cache = {}
-    coordinator._info_panel_metadata_attempted = set()
-    coordinator._info_panel_metadata_inflight = {str(asset_path)}
-    coordinator._location_preview_path = asset_path
-    coordinator._location_preview_metadata = dict(metadata)
-    coordinator._detail_vm = Mock(refresh_current=Mock())
-    coordinator._library_manager = None
-    coordinator._location_session_invalidator = None
-    popup_parent = Mock()
-    coordinator._info_panel = Mock(parentWidget=Mock(return_value=popup_parent))
-    show_warning = Mock()
-    monkeypatch.setattr(playback_coordinator_module.dialogs, "show_warning", show_warning)
-    coordinator._queue_location_exiftool_missing_warning = Mock()
-    coordinator._queue_location_file_write_warning = Mock(
-        side_effect=lambda message: PlaybackCoordinator._show_location_file_write_warning(
-            coordinator,
-            message,
-        )
-    )
-
-    result = AssignedLocationResult(
-        asset_path=asset_path,
-        asset_rel="photo.jpg",
-        display_name="Paris",
-        gps={"lat": 48.8566, "lon": 2.3522},
-        metadata=metadata,
-        file_write_error="ExifTool failed with an error: permission denied",
-    )
-
-    PlaybackCoordinator._handle_location_assignment_ready(coordinator, result)
-
-    store.update_asset_metadata.assert_called_once_with(4, metadata)
-    coordinator._queue_location_exiftool_missing_warning.assert_not_called()
-    coordinator._queue_location_file_write_warning.assert_called_once_with(
-        "ExifTool failed with an error: permission denied"
-    )
-    show_warning.assert_called_once_with(
-        popup_parent,
-        playback_coordinator_module._LOCATION_FILE_WRITE_LIMITED_MESSAGE_TEMPLATE.format(
-            reason="ExifTool failed with an error: permission denied"
-        ),
-        title=playback_coordinator_module._LOCATION_FILE_WRITE_LIMITED_TITLE,
-    )
 
 
 def test_location_file_write_finished_restores_released_current_video() -> None:
@@ -1852,32 +1327,22 @@ def test_location_file_write_finished_restores_released_current_video() -> None:
     coordinator._location_released_video_path = asset_path
     coordinator._location_released_video_was_playing = False
     coordinator._location_released_video_position_ms = 1234
+    coordinator._location_write_jobs_by_path = {asset_path: "job-1"}
 
-    PlaybackCoordinator._handle_location_assignment_file_write_finished(coordinator, asset_path)
+    result = LocationFileWriteResult(
+        job_id="job-1",
+        asset_path=asset_path,
+        gps={"lat": 48.137154, "lon": 11.576124},
+        location="Munich",
+    )
+
+    PlaybackCoordinator._handle_location_file_write_verified(coordinator, result)
 
     assert coordinator._location_video_write_inflight_paths == set()
+    assert coordinator._location_write_jobs_by_path == {}
     coordinator._render_presentation.assert_called_once_with(presentation)
     video_area.seek.assert_called_once_with(1234)
     video_area.pause.assert_called_once_with()
-
-
-def test_location_assignment_finished_only_clears_info_panel_busy_state() -> None:
-    coordinator = PlaybackCoordinator.__new__(PlaybackCoordinator)
-    coordinator._location_assign_inflight = True
-    coordinator._location_assign_path = Path("/fake/video.mp4")
-    coordinator._location_video_write_inflight_paths = {Path("/fake/video.mp4")}
-    coordinator._location_released_video_path = Path("/fake/video.mp4")
-    coordinator._restore_video_released_for_location_write = Mock()
-    coordinator._info_panel = Mock(set_location_busy=Mock())
-    coordinator._refresh_info_panel = Mock()
-
-    PlaybackCoordinator._handle_location_assignment_finished(coordinator)
-
-    assert coordinator._location_assign_inflight is False
-    assert coordinator._location_assign_path is None
-    coordinator._info_panel.set_location_busy.assert_called_once_with(False)
-    coordinator._refresh_info_panel.assert_not_called()
-    coordinator._restore_video_released_for_location_write.assert_not_called()
 
 
 def test_location_file_write_finished_renders_current_video_when_user_returned() -> None:
@@ -1889,10 +1354,19 @@ def test_location_file_write_finished_renders_current_video_when_user_returned()
     coordinator._render_presentation = Mock()
     coordinator._location_video_write_inflight_paths = {asset_path}
     coordinator._location_released_video_path = None
+    coordinator._location_write_jobs_by_path = {asset_path: "job-1"}
 
-    PlaybackCoordinator._handle_location_assignment_file_write_finished(coordinator, asset_path)
+    result = LocationFileWriteResult(
+        job_id="job-1",
+        asset_path=asset_path,
+        gps={"lat": 48.137154, "lon": 11.576124},
+        location="Munich",
+    )
+
+    PlaybackCoordinator._handle_location_file_write_verified(coordinator, result)
 
     assert coordinator._location_video_write_inflight_paths == set()
+    assert coordinator._location_write_jobs_by_path == {}
     coordinator._render_presentation.assert_called_once_with(presentation)
 
 
@@ -1908,6 +1382,7 @@ def test_location_file_write_error_warns_and_allows_video_load(
     coordinator._render_presentation = Mock()
     coordinator._location_video_write_inflight_paths = {asset_path}
     coordinator._location_released_video_path = None
+    coordinator._location_write_jobs_by_path = {asset_path: "job-1"}
     show_warning = Mock()
     monkeypatch.setattr(playback_coordinator_module.dialogs, "show_warning", show_warning)
     coordinator._queue_location_file_write_warning = Mock(
@@ -1917,13 +1392,18 @@ def test_location_file_write_error_warns_and_allows_video_load(
         )
     )
 
-    PlaybackCoordinator._handle_location_assignment_file_write_error(
-        coordinator,
-        asset_path,
-        "permission denied",
+    result = LocationFileWriteResult(
+        job_id="job-1",
+        asset_path=asset_path,
+        gps={"lat": 48.137154, "lon": 11.576124},
+        location="Munich",
+        error="permission denied",
     )
 
+    PlaybackCoordinator._handle_location_file_write_failed(coordinator, result)
+
     assert coordinator._location_video_write_inflight_paths == set()
+    assert coordinator._location_write_jobs_by_path == {}
     coordinator._queue_location_file_write_warning.assert_called_once_with("permission denied")
     coordinator._render_presentation.assert_called_once_with(coordinator._current_presentation)
     show_warning.assert_called_once_with(
