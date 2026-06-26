@@ -25,6 +25,7 @@ from iPhoto.infrastructure.repositories.location_assignment_repository import (
 )
 from iPhoto.gui.detail_profile import log_detail_profile
 from iPhoto.gui.coordinators.view_router import ViewRouter
+from iPhoto.gui.i18n import tr
 from iPhoto.gui.services.location_file_write_queue import (
     LocationFileWriteQueue,
     LocationFileWriteResult,
@@ -63,7 +64,6 @@ LOGGER = logging.getLogger(__name__)
 
 _INFO_PANEL_METADATA_CACHE_MAX = 200
 _LOCATION_EXTENSION_PROMPT = "Install the map extension to use Assign a Location."
-_LOCATION_VIDEO_WRITE_PLACEHOLDER = "Writing data, please wait..."
 _LOCATION_EXIFTOOL_LIMITED_TITLE = "功能受限"
 _LOCATION_EXIFTOOL_LIMITED_MESSAGE = (
     "地点已保存到本机图库数据库。\n\n"
@@ -75,6 +75,10 @@ _LOCATION_FILE_WRITE_LIMITED_MESSAGE_TEMPLATE = (
     "地点已保存到本机图库数据库。\n\n"
     "GPS 信息未能写入原始照片/视频文件：{reason}"
 )
+
+
+def _location_video_write_placeholder() -> str:
+    return tr("PlaybackCoordinator", "Writing data, please wait...")
 
 
 class PlaybackCoordinator(QObject):
@@ -574,7 +578,7 @@ class PlaybackCoordinator(QObject):
         if presentation.is_video:
             self._hide_face_name_overlay(clear_annotations=True)
             if self._is_location_video_write_inflight(source):
-                self._player_view.show_placeholder(_LOCATION_VIDEO_WRITE_PLACEHOLDER)
+                self._player_view.show_placeholder(_location_video_write_placeholder())
                 if self._player_view.video_area.has_video():
                     self._player_view.video_area.stop()
                 self._player_bar.setEnabled(False)
@@ -1356,7 +1360,7 @@ class PlaybackCoordinator(QObject):
         self._location_released_video_position_ms = (
             max(0, int(current_position())) if callable(current_position) else None
         )
-        self._player_view.show_placeholder(_LOCATION_VIDEO_WRITE_PLACEHOLDER)
+        self._player_view.show_placeholder(_location_video_write_placeholder())
         self._player_bar.setEnabled(False)
         stop()
 
