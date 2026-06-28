@@ -4,13 +4,15 @@ import os
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 
 from iPhoto.gui.main import (
     _bootstrap_macos_external_tool_path,
     _configure_qt_opengl_defaults,
     _prepare_qt_runtime_for_maps,
     _startup_feature_plan,
+    _startup_timing_plan,
+    _StartupInputGuard,
 )
 
 
@@ -227,6 +229,65 @@ def test_startup_feature_plan_keeps_opengl_rhi_detail_before_show(
     expected: tuple[tuple[str, ...], tuple[str, ...]],
 ) -> None:
     assert _startup_feature_plan(platform) == expected
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    (
+        ("linux", (120, 50, 100)),
+        ("win32", (0, 0, 0)),
+        ("darwin", (0, 0, 0)),
+    ),
+)
+def test_startup_timing_plan_only_slows_linux_post_paint_startup(
+    platform: str,
+    expected: tuple[int, int, int],
+) -> None:
+    assert tuple(_startup_timing_plan(platform)) == expected
+
+
+def test_startup_input_guard_filters_only_window_startup_input() -> None:
+    installed_filters: list[object] = []
+    removed_filters: list[object] = []
+
+    class _FakeApp:
+        def installEventFilter(self, event_filter) -> None:  # noqa: N802 - Qt style
+            installed_filters.append(event_filter)
+
+        def removeEventFilter(self, event_filter) -> None:  # noqa: N802 - Qt style
+            removed_filters.append(event_filter)
+
+    class _FakeObject:
+        def __init__(self, parent=None) -> None:
+            self._parent = parent
+
+        def parent(self):
+            return self._parent
+
+    class _FakeEvent:
+        def __init__(self, event_type) -> None:
+            self._event_type = event_type
+
+        def type(self):
+            return self._event_type
+
+    window = _FakeObject()
+    child = _FakeObject(window)
+    external = _FakeObject()
+    guard = _StartupInputGuard(window, _FakeApp())
+
+    guard.install()
+
+    assert installed_filters == [guard]
+    assert guard.eventFilter(child, _FakeEvent(QEvent.Type.MouseButtonPress)) is True
+    assert guard.eventFilter(child, _FakeEvent(QEvent.Type.Wheel)) is True
+    assert guard.eventFilter(child, _FakeEvent(QEvent.Type.Paint)) is False
+    assert guard.eventFilter(external, _FakeEvent(QEvent.Type.MouseButtonPress)) is False
+
+    guard.release()
+
+    assert removed_filters == [guard]
+    assert guard.eventFilter(child, _FakeEvent(QEvent.Type.MouseButtonPress)) is False
 
 
 @pytest.mark.parametrize("platform", ("win32", "linux", "darwin"))
