@@ -16,7 +16,6 @@ _WINDOWS_SIMPLIFIED_CHINESE_FONTS = (
     "Microsoft Yahei",
     "微软雅黑",
 )
-_LINUX_SIMPLIFIED_CHINESE_FONTS = ("Noto Sans CJK SC",)
 
 
 @dataclass
@@ -24,9 +23,6 @@ class _FontState:
     app_id: int | None = None
     original_font: QFont | None = None
     applied_family: str | None = None
-    substitution_family: str | None = None
-    original_substitutions: list[str] | None = None
-    applied_substitution: str | None = None
 
 
 _STATE = _FontState()
@@ -64,17 +60,14 @@ def apply_language_font(effective_language: str) -> str | None:
     _ensure_state_for_app(app)
 
     if effective_language != _SIMPLIFIED_CHINESE_LANGUAGE:
-        _restore_language_font(app)
+        _restore_windows_font(app)
         return None
 
     platform = sys.platform
-    if platform.startswith("linux"):
-        return _apply_linux_simplified_chinese_substitution(app)
     if platform != "win32":
-        _restore_language_font(app)
+        _restore_windows_font(app)
         return None
 
-    _restore_linux_substitution()
     return _apply_windows_simplified_chinese_font(app)
 
 
@@ -94,49 +87,14 @@ def _apply_windows_simplified_chinese_font(app: QGuiApplication) -> str | None:
     return family
 
 
-def _apply_linux_simplified_chinese_substitution(app: QGuiApplication) -> str:
-    _restore_windows_font(app)
-
-    base_family = str(app.font().family() or "").strip()
-    preferred_family = _LINUX_SIMPLIFIED_CHINESE_FONTS[0]
-    if not base_family:
-        return preferred_family
-
-    if _STATE.substitution_family != base_family:
-        _restore_linux_substitution()
-        _STATE.substitution_family = base_family
-        _STATE.original_substitutions = list(QFont.substitutes(base_family))
-
-    existing = _STATE.original_substitutions or []
-    substitutions = _deduplicated_families([preferred_family, *existing])
-    QFont.removeSubstitutions(base_family)
-    QFont.insertSubstitutions(base_family, substitutions)
-    _STATE.applied_substitution = preferred_family
-    return preferred_family
-
-
 def _font_candidates_for_platform(platform: str) -> tuple[str, ...]:
     if platform == "win32":
         return _WINDOWS_SIMPLIFIED_CHINESE_FONTS
-    if platform.startswith("linux"):
-        return _LINUX_SIMPLIFIED_CHINESE_FONTS
     return ()
 
 
 def _normalise_family_name(family: object) -> str:
     return str(family).strip().casefold()
-
-
-def _deduplicated_families(families: Iterable[str]) -> list[str]:
-    deduplicated: list[str] = []
-    seen: set[str] = set()
-    for family in families:
-        normalized = _normalise_family_name(family)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        deduplicated.append(str(family).strip())
-    return deduplicated
 
 
 def _available_font_families() -> list[str]:
@@ -154,14 +112,6 @@ def _ensure_state_for_app(app: QGuiApplication) -> None:
     _STATE.app_id = app_id
     _STATE.original_font = None
     _STATE.applied_family = None
-    _STATE.substitution_family = None
-    _STATE.original_substitutions = None
-    _STATE.applied_substitution = None
-
-
-def _restore_language_font(app: QGuiApplication) -> None:
-    _restore_windows_font(app)
-    _restore_linux_substitution()
 
 
 def _restore_windows_font(app: QGuiApplication) -> None:
@@ -171,19 +121,6 @@ def _restore_windows_font(app: QGuiApplication) -> None:
         app.setFont(QFont(_STATE.original_font))
     _STATE.original_font = None
     _STATE.applied_family = None
-
-
-def _restore_linux_substitution() -> None:
-    base_family = _STATE.substitution_family
-    if base_family is None:
-        return
-
-    QFont.removeSubstitutions(base_family)
-    if _STATE.original_substitutions:
-        QFont.insertSubstitutions(base_family, list(_STATE.original_substitutions))
-    _STATE.substitution_family = None
-    _STATE.original_substitutions = None
-    _STATE.applied_substitution = None
 
 
 __all__ = ["apply_language_font", "simplified_chinese_font_family"]
