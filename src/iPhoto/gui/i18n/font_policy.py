@@ -101,6 +101,9 @@ def _apply_windows_simplified_chinese_font(app: QGuiApplication) -> str | None:
     if _STATE.original_font is None:
         _STATE.original_font = QFont(app.font())
 
+    if _STATE.applied_family is None:
+        _remember_existing_widget_fonts()
+
     font = QFont(app.font())
     font.setFamily(family)
     app.setFont(font)
@@ -154,9 +157,34 @@ def _sync_existing_widget_fonts(family: str) -> None:
         _apply_font_to_widget(widget, family)
 
 
+def _remember_existing_widget_fonts() -> None:
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.allWidgets():
+        _remember_widget_font(widget)
+
+
+def _remember_widget_font(widget: QWidget) -> None:
+    if widget.property(_ORIGINAL_WIDGET_FONT_PROPERTY) is not None:
+        return
+    widget.setProperty(_ORIGINAL_WIDGET_FONT_PROPERTY, _restorable_widget_font(widget))
+
+
+def _restorable_widget_font(widget: QWidget) -> QFont:
+    font = QFont(widget.font())
+    if (
+        _STATE.original_font is not None
+        and _STATE.applied_family is not None
+        and _normalise_family_name(font.family())
+        == _normalise_family_name(_STATE.applied_family)
+    ):
+        font.setFamily(_STATE.original_font.family())
+    return font
+
+
 def _apply_font_to_widget(widget: QWidget, family: str) -> None:
-    if widget.property(_ORIGINAL_WIDGET_FONT_PROPERTY) is None:
-        widget.setProperty(_ORIGINAL_WIDGET_FONT_PROPERTY, QFont(widget.font()))
+    _remember_widget_font(widget)
 
     font = QFont(widget.font())
     if font.family() == family:

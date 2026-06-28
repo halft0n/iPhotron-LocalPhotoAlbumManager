@@ -234,6 +234,52 @@ def test_translation_manager_syncs_existing_widget_fonts_for_windows_chinese(
         font_policy._STATE.applied_family = None
 
 
+def test_translation_manager_restores_widgets_created_during_windows_chinese(
+    tmp_path: Path,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved_app_font = QFont(qapp.font())
+    original_font = QFont("Segoe UI", 10)
+    qapp.setFont(original_font)
+    font_policy._STATE.app_id = None
+    font_policy._STATE.original_font = None
+    font_policy._STATE.applied_family = None
+    monkeypatch.setattr(font_policy.sys, "platform", "win32")
+    monkeypatch.setattr(font_policy, "_available_font_families", lambda: ["微软雅黑"])
+    manager = _settings(tmp_path)
+    translations = TranslationManager(manager)
+    label: QLabel | None = None
+
+    try:
+        translations.apply_language("zh-CN")
+
+        label = QLabel("中文")
+        label_font = QFont(label.font())
+        label_font.setBold(True)
+        label_font.setPointSizeF(label_font.pointSizeF() + 0.5)
+        label.setFont(label_font)
+        font_policy.sync_widget_language_font(label)
+
+        assert label.font().family() == "微软雅黑"
+        assert label.font().bold()
+
+        translations.apply_language("de")
+
+        assert qapp.font().family() == original_font.family()
+        assert label.font().family() == original_font.family()
+        assert label.font().bold()
+        assert label.font().pointSizeF() == pytest.approx(original_font.pointSizeF() + 0.5)
+    finally:
+        translations._remove_installed_translator(qapp)
+        if label is not None:
+            label.close()
+        qapp.setFont(saved_app_font)
+        font_policy._STATE.app_id = None
+        font_policy._STATE.original_font = None
+        font_policy._STATE.applied_family = None
+
+
 def test_translation_manager_leaves_linux_font_fallback_to_qt_and_fontconfig(
     tmp_path: Path,
     qapp: QApplication,
