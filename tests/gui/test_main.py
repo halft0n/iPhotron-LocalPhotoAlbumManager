@@ -219,17 +219,17 @@ def test_prepare_qt_runtime_for_maps_allows_packaged_linux_wayland_opt_out(monke
     (
         ("win32", (("detail",), ("preview", "people"))),
         ("darwin", ((), ("detail", "preview", "people"))),
-        ("linux", ((), ("detail", "preview", "people"))),
+        ("linux", (("detail",), ("preview", "people"))),
     ),
 )
-def test_startup_feature_plan_keeps_windows_rhi_detail_before_show(
+def test_startup_feature_plan_keeps_opengl_rhi_detail_before_show(
     platform: str,
     expected: tuple[tuple[str, ...], tuple[str, ...]],
 ) -> None:
     assert _startup_feature_plan(platform) == expected
 
 
-@pytest.mark.parametrize("platform", ("win32", "linux"))
+@pytest.mark.parametrize("platform", ("win32", "linux", "darwin"))
 def test_main_creates_required_features_in_platform_safe_order(
     monkeypatch,
     platform: str,
@@ -395,14 +395,16 @@ def test_main_creates_required_features_in_platform_safe_order(
     people_index = call_order.index("feature:people")
     coordinator_index = call_order.index("coordinator:create")
 
-    if platform == "win32":
+    if platform in {"win32", "linux"}:
         assert detail_index < show_index
-        assert "windows_detail.before_create" in profile_marks
-        assert "windows_detail.created" in profile_marks
+        assert "rhi_detail.before_create" in profile_marks
+        assert "rhi_detail.created" in profile_marks
     else:
         assert show_index < detail_index
-        assert "windows_detail.before_create" not in profile_marks
-        assert "windows_detail.created" not in profile_marks
+        assert "rhi_detail.before_create" not in profile_marks
+        assert "rhi_detail.created" not in profile_marks
+    assert "windows_detail.before_create" not in profile_marks
+    assert "windows_detail.created" not in profile_marks
     assert show_index < preview_index < people_index < coordinator_index
 
 

@@ -10,12 +10,12 @@ from pathlib import Path
 from iPhoto.bootstrap.startup_profile import mark
 
 mark("module.before_qt_imports")
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QColor, QPalette, QSurfaceFormat
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer, Qt  # noqa: E402, I001
+from PySide6.QtGui import QColor, QPalette, QSurfaceFormat  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from iPhoto.bootstrap.qt_shader_cache import configure_shader_cache_environment
-from iPhoto.gui.render_backend import should_configure_global_desktop_opengl
+from iPhoto.bootstrap.qt_shader_cache import configure_shader_cache_environment  # noqa: E402
+from iPhoto.gui.render_backend import should_configure_global_desktop_opengl  # noqa: E402
 
 mark("module.imported")
 
@@ -148,12 +148,17 @@ def _prepare_qt_runtime_for_maps() -> None:
         os.environ["QT_QPA_PLATFORM"] = "xcb"
     else:
         try:
-            from maps.map_sources import has_usable_osmand_native_widget, prefer_osmand_native_widget
-        except Exception:
+            from maps.map_sources import (
+                has_usable_osmand_native_widget,
+                prefer_osmand_native_widget,
+            )
+        except Exception:  # noqa: BLE001
             return
 
         maps_package_root = Path(__file__).resolve().parents[2] / "maps"
-        if not prefer_osmand_native_widget() or not has_usable_osmand_native_widget(maps_package_root):
+        if not prefer_osmand_native_widget() or not has_usable_osmand_native_widget(
+            maps_package_root
+        ):
             return
 
     if not os.environ.get("QT_QPA_PLATFORM"):
@@ -173,18 +178,18 @@ def _configure_qt_opengl_defaults(library_root: Path | None = None) -> None:
 
     try:
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     if should_configure_global_desktop_opengl():
         try:
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL, True)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     try:
         QSurfaceFormat.setDefaultFormat(_map_gl_surface_format())
-    except Exception:
+    except Exception:  # noqa: BLE001
         return
 
 
@@ -193,16 +198,16 @@ def _startup_feature_plan(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return features created before and after the main window is shown.
 
-    On Windows, inserting the detail page's ``QRhiWidget`` children into an
-    already visible top-level widget can make Qt recreate the native window.
-    That appears as a short-lived first window followed by the real one.  Keep
-    the GPU-backed detail page in the pre-show phase there, while retaining the
-    faster first-frame path on the other desktop platforms.
+    On OpenGL-backed desktop platforms, inserting the detail page's
+    ``QRhiWidget`` children into an already visible top-level widget can make
+    Qt recreate the native window. That appears as a short-lived first window
+    followed by the real one. Keep the GPU-backed detail page in the pre-show
+    phase there, while retaining the faster first-frame path on macOS.
     """
 
     target_platform = sys.platform if platform is None else platform
     deferred = ("detail", "preview", "people")
-    if target_platform == "win32":
+    if target_platform in {"win32", "linux"}:
         return (("detail",), ("preview", "people"))
     return ((), deferred)
 
@@ -298,10 +303,10 @@ def main(argv: list[str] | None = None) -> int:
     pre_show_features, post_show_features = _startup_feature_plan()
     for feature in pre_show_features:
         if feature == "detail":
-            mark("windows_detail.before_create")
+            mark("rhi_detail.before_create")
         window.ui.ensure_feature(feature)
         if feature == "detail":
-            mark("windows_detail.created")
+            mark("rhi_detail.created")
 
     # Coordinator needs Window, Context, and Container
     def _initialize_after_show() -> None:
