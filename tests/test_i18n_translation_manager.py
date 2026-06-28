@@ -168,6 +168,9 @@ def test_translation_manager_applies_and_restores_simplified_chinese_font(
     font_policy._STATE.app_id = None
     font_policy._STATE.original_font = None
     font_policy._STATE.applied_family = None
+    font_policy._STATE.substitution_family = None
+    font_policy._STATE.original_substitutions = None
+    font_policy._STATE.applied_substitution = None
     monkeypatch.setattr(font_policy.sys, "platform", "win32")
     monkeypatch.setattr(font_policy, "_available_font_families", lambda: ["微软雅黑"])
     manager = _settings(tmp_path)
@@ -186,6 +189,61 @@ def test_translation_manager_applies_and_restores_simplified_chinese_font(
         font_policy._STATE.app_id = None
         font_policy._STATE.original_font = None
         font_policy._STATE.applied_family = None
+        font_policy._STATE.substitution_family = None
+        font_policy._STATE.original_substitutions = None
+        font_policy._STATE.applied_substitution = None
+
+
+def test_translation_manager_uses_linux_font_substitution_without_global_font_change(
+    tmp_path: Path,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_family = qapp.font().family()
+    original_substitutions = QFont.substitutes(base_family)
+    original_top_levels = list(qapp.topLevelWidgets())
+    font_policy._STATE.app_id = None
+    font_policy._STATE.original_font = None
+    font_policy._STATE.applied_family = None
+    font_policy._STATE.substitution_family = None
+    font_policy._STATE.original_substitutions = None
+    font_policy._STATE.applied_substitution = None
+    monkeypatch.setattr(font_policy.sys, "platform", "linux")
+    monkeypatch.setattr(
+        font_policy,
+        "_available_font_families",
+        lambda: pytest.fail("Linux font policy must not enumerate the font database"),
+    )
+    monkeypatch.setattr(
+        font_policy.QGuiApplication,
+        "setFont",
+        lambda *_args, **_kwargs: pytest.fail("Linux font policy must not set app font"),
+    )
+    manager = _settings(tmp_path)
+    translations = TranslationManager(manager)
+
+    try:
+        translations.apply_language("zh-CN")
+
+        assert QFont.substitutes(base_family)[0] == "noto sans cjk sc"
+        assert qapp.font().family() == base_family
+        assert list(qapp.topLevelWidgets()) == original_top_levels
+
+        translations.apply_language("de")
+
+        assert QFont.substitutes(base_family) == original_substitutions
+        assert qapp.font().family() == base_family
+        assert list(qapp.topLevelWidgets()) == original_top_levels
+    finally:
+        QFont.removeSubstitutions(base_family)
+        if original_substitutions:
+            QFont.insertSubstitutions(base_family, original_substitutions)
+        font_policy._STATE.app_id = None
+        font_policy._STATE.original_font = None
+        font_policy._STATE.applied_family = None
+        font_policy._STATE.substitution_family = None
+        font_policy._STATE.original_substitutions = None
+        font_policy._STATE.applied_substitution = None
 
 
 def test_detail_page_retranslate_updates_standard_placeholder_only(
