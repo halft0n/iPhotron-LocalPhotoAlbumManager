@@ -74,6 +74,7 @@ jobs:
             --nofollow-import-to=typing_inspection \
             --nofollow-import-to=pytest \
             --nofollow-import-to=iPhoto.tests \
+            --nofollow-import-to=insightface.thirdparty.face3d \
             --include-package=iPhoto \
             --include-package=maps \
             --include-package=OpenGL \
@@ -275,6 +276,7 @@ jobs:
             '--nofollow-import-to=typing_inspection',
             '--nofollow-import-to=iPhoto.tests',
             '--nofollow-import-to=pytest',
+            '--nofollow-import-to=insightface.thirdparty.face3d',
             '--include-package=iPhoto',
             '--include-package=maps',
             '--include-package=OpenGL',
