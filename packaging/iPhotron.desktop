@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=iPhotron
+GenericName=Photo Manager
+Comment=Folder-native photo manager with Live Photo support
+Exec=iPhotron %F
+Icon=iPhotron
+Terminal=false
+Categories=Graphics;Photography;Viewer;
+MimeType=image/jpeg;image/png;image/heic;image/heif;image/webp;image/tiff;image/bmp;video/mp4;video/quicktime;
+StartupWMClass=iPhotron

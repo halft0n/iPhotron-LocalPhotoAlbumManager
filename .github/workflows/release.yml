@@ -1,0 +1,359 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  BUFFALO_S_URL: "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux build — produces .deb and .AppImage
+  # ---------------------------------------------------------------------------
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libpulse0 \
+            patchelf ccache fuse libfuse2
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[ai-demo]"
+          pip install nuitka ordered-set
+
+      - name: Download InsightFace models
+        run: |
+          mkdir -p src/extension/models
+          curl -L -o /tmp/buffalo_s.zip "$BUFFALO_S_URL"
+          unzip -o /tmp/buffalo_s.zip -d src/extension/models/
+
+      - name: AOT compile Numba filters
+        run: python src/iPhoto/core/filters/build_jit.py
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build with Nuitka
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m nuitka \
+            --standalone \
+            --python-flag=no_site \
+            --lto=yes \
+            --clang \
+            --enable-plugin=pyside6 \
+            --include-qt-plugins=qml,multimedia,xcbglintegrations,platforms \
+            --follow-imports \
+            --nofollow-import-to=numba \
+            --nofollow-import-to=llvmlite \
+            --nofollow-import-to=albumentations \
+            --nofollow-import-to=albucore \
+            --nofollow-import-to=pydantic \
+            --nofollow-import-to=pydantic_core \
+            --nofollow-import-to=typing_inspection \
+            --nofollow-import-to=pytest \
+            --nofollow-import-to=iPhoto.tests \
+            --include-package=iPhoto \
+            --include-package=maps \
+            --include-package=OpenGL \
+            --include-package=OpenGL_accelerate \
+            --include-package=insightface \
+            --include-package=onnxruntime \
+            --include-data-dir=src/extension/models=extension/models \
+            --include-data-dir=src/iPhoto/resources/i18n=iPhoto/resources/i18n \
+            --include-data-dir=src/iPhoto/schemas=iPhoto/schemas \
+            --include-data-dir=src/iPhoto/gui/ui/icon=iPhoto/gui/ui/icon \
+            --include-data-dir=src/iPhoto/gui/ui/qml=iPhoto/gui/ui/qml \
+            --include-data-file=src/maps/style.json=maps/style.json \
+            --include-data-dir=src/maps/map_widget/qml=maps/map_widget/qml \
+            --include-data-file=src/iPhoto/gui/ui/widgets/gl_image_viewer.frag=iPhoto/gui/ui/widgets/gl_image_viewer.frag \
+            --include-data-file=src/iPhoto/gui/ui/widgets/gl_image_viewer.vert=iPhoto/gui/ui/widgets/gl_image_viewer.vert \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_rhi.frag=iPhoto/gui/ui/widgets/image_viewer_rhi.frag \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_rhi.frag.qsb=iPhoto/gui/ui/widgets/image_viewer_rhi.frag.qsb \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_rhi.vert=iPhoto/gui/ui/widgets/image_viewer_rhi.vert \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_rhi.vert.qsb=iPhoto/gui/ui/widgets/image_viewer_rhi.vert.qsb \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_overlay.frag=iPhoto/gui/ui/widgets/image_viewer_overlay.frag \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_overlay.frag.qsb=iPhoto/gui/ui/widgets/image_viewer_overlay.frag.qsb \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_overlay.vert=iPhoto/gui/ui/widgets/image_viewer_overlay.vert \
+            --include-data-file=src/iPhoto/gui/ui/widgets/image_viewer_overlay.vert.qsb=iPhoto/gui/ui/widgets/image_viewer_overlay.vert.qsb \
+            --include-data-file=src/iPhoto/gui/ui/widgets/video_renderer.frag=iPhoto/gui/ui/widgets/video_renderer.frag \
+            --include-data-file=src/iPhoto/gui/ui/widgets/video_renderer.frag.qsb=iPhoto/gui/ui/widgets/video_renderer.frag.qsb \
+            --include-data-file=src/iPhoto/gui/ui/widgets/video_renderer.vert=iPhoto/gui/ui/widgets/video_renderer.vert \
+            --include-data-file=src/iPhoto/gui/ui/widgets/video_renderer.vert.qsb=iPhoto/gui/ui/widgets/video_renderer.vert.qsb \
+            --assume-yes-for-downloads \
+            --output-dir=dist \
+            src/iPhoto/gui/main.py
+
+      - name: Locate Nuitka output directory
+        id: nuitka
+        run: |
+          DIST_DIR="$(find dist -maxdepth 1 -type d -name 'main.dist' | head -1)"
+          if [ -z "$DIST_DIR" ]; then
+            echo "::error::Nuitka output directory not found"
+            exit 1
+          fi
+          echo "dist_dir=$DIST_DIR" >> "$GITHUB_OUTPUT"
+          EXECUTABLE="$(find "$DIST_DIR" -maxdepth 1 -name 'main.bin' -o -name 'main' | head -1)"
+          EXEC_NAME="$(basename "$EXECUTABLE")"
+          echo "exec_name=$EXEC_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Package .deb
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_DIR: ${{ steps.nuitka.outputs.dist_dir }}
+          EXEC_NAME: ${{ steps.nuitka.outputs.exec_name }}
+        run: |
+          PKG_ROOT="iphotron_${VERSION}_amd64"
+          APP_ROOT="$PKG_ROOT/opt/iPhotron"
+          BIN_ROOT="$PKG_ROOT/usr/local/bin"
+
+          mkdir -p "$PKG_ROOT/DEBIAN" "$APP_ROOT" "$BIN_ROOT"
+          cp -a "$DIST_DIR/." "$APP_ROOT/"
+
+          cat > "$PKG_ROOT/DEBIAN/control" <<CTRL
+          Package: iPhotron
+          Version: ${VERSION}
+          Section: graphics
+          Priority: optional
+          Architecture: amd64
+          Depends: libegl1, libgl1, libxkbcommon0, libpulse0
+          Maintainer: iPhotron Team
+          Description: Folder-native local photo album manager
+           iPhotron is a folder-native photo manager inspired by macOS Photos.
+           It organizes media using lightweight JSON manifests and provides
+           rich album functionality while keeping original media intact.
+          CTRL
+
+          printf '#!/bin/sh\nexec /opt/iPhotron/%s "$@"\n' "$EXEC_NAME" > "$BIN_ROOT/iPhotron"
+          chmod 755 "$BIN_ROOT/iPhotron"
+          chmod 644 "$PKG_ROOT/DEBIAN/control"
+
+          dpkg-deb --build "$PKG_ROOT"
+          mv "${PKG_ROOT}.deb" "iphotron_${VERSION}_amd64.deb"
+
+      - name: Package AppImage
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_DIR: ${{ steps.nuitka.outputs.dist_dir }}
+          EXEC_NAME: ${{ steps.nuitka.outputs.exec_name }}
+        run: |
+          APPDIR="iPhotron.AppDir"
+          mkdir -p "$APPDIR/opt/iPhotron" "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp -a "$DIST_DIR/." "$APPDIR/opt/iPhotron/"
+
+          cp packaging/iPhotron.desktop "$APPDIR/usr/share/applications/"
+          cp packaging/iPhotron.desktop "$APPDIR/"
+
+          # Generate a simple PNG icon from the sparkles SVG as a fallback
+          python -c "
+          from PySide6.QtWidgets import QApplication
+          from PySide6.QtGui import QImage, QPainter
+          from PySide6.QtSvg import QSvgRenderer
+          from PySide6.QtCore import QSize
+          import sys, os
+          os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+          app = QApplication(sys.argv)
+          renderer = QSvgRenderer('src/iPhoto/gui/ui/icon/photo.on.rectangle.svg')
+          img = QImage(QSize(256, 256), QImage.Format.Format_ARGB32)
+          img.fill(0)
+          painter = QPainter(img)
+          renderer.render(painter)
+          painter.end()
+          img.save('$APPDIR/iPhotron.png')
+          " 2>/dev/null || touch "$APPDIR/iPhotron.png"
+          cp "$APPDIR/iPhotron.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/" 2>/dev/null || true
+          cp "$APPDIR/iPhotron.png" "$APPDIR/.DirIcon" 2>/dev/null || true
+
+          # Create AppRun
+          cat > "$APPDIR/AppRun" <<APPRUN
+          #!/bin/bash
+          SELF="\$(readlink -f "\$0")"
+          HERE="\$(dirname "\$SELF")"
+          export LD_LIBRARY_PATH="\${HERE}/opt/iPhotron:\${LD_LIBRARY_PATH}"
+          export PATH="\${HERE}/usr/bin:\${PATH}"
+          exec "\${HERE}/opt/iPhotron/${EXEC_NAME}" "\$@"
+          APPRUN
+          chmod +x "$APPDIR/AppRun"
+
+          # Download appimagetool
+          curl -L -o /tmp/appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool
+
+          ARCH=x86_64 /tmp/appimagetool --no-appstream "$APPDIR" \
+            "iPhotron-${VERSION}-x86_64.AppImage"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            iphotron_*_amd64.deb
+            iPhotron-*-x86_64.AppImage
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # Windows build — produces portable ZIP
+  # ---------------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[ai-demo]"
+          pip install nuitka ordered-set
+
+      - name: Download InsightFace models
+        shell: bash
+        run: |
+          mkdir -p src/extension/models
+          curl -L -o /tmp/buffalo_s.zip "$BUFFALO_S_URL"
+          unzip -o /tmp/buffalo_s.zip -d src/extension/models/
+
+      - name: AOT compile Numba filters
+        run: python src/iPhoto/core/filters/build_jit.py
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build with Nuitka
+        shell: pwsh
+        run: |
+          $srcRoot = Join-Path $PWD 'src'
+          $arguments = @(
+            '-m', 'nuitka',
+            '--standalone',
+            "--jobs=$([Math]::Max(1, [Environment]::ProcessorCount))",
+            '--msvc=latest',
+            '--lto=yes',
+            '--follow-imports',
+            '--python-flag=no_site',
+            '--enable-plugin=pyside6',
+            '--include-qt-plugins=qml,multimedia,platforms',
+            '--windows-console-mode=disable',
+            '--assume-yes-for-downloads',
+            '--nofollow-import-to=numba',
+            '--nofollow-import-to=llvmlite',
+            '--nofollow-import-to=albumentations',
+            '--nofollow-import-to=albucore',
+            '--nofollow-import-to=pydantic',
+            '--nofollow-import-to=pydantic_core',
+            '--nofollow-import-to=typing_inspection',
+            '--nofollow-import-to=iPhoto.tests',
+            '--nofollow-import-to=pytest',
+            '--include-package=iPhoto',
+            '--include-package=maps',
+            '--include-package=OpenGL',
+            '--include-package=OpenGL_accelerate',
+            '--include-package=cv2',
+            '--include-package=reverse_geocoder',
+            '--include-package=insightface',
+            '--include-package=onnxruntime',
+            '--output-dir=dist',
+            "--include-data-dir=$(Join-Path $srcRoot 'extension\models')=extension/models",
+            "--include-data-dir=$(Join-Path $srcRoot 'iPhoto\resources\i18n')=iPhoto/resources/i18n",
+            "--include-data-dir=$(Join-Path $srcRoot 'iPhoto\schemas')=iPhoto/schemas",
+            "--include-data-dir=$(Join-Path $srcRoot 'iPhoto\gui\ui\icon')=iPhoto/gui/ui/icon",
+            "--include-data-dir=$(Join-Path $srcRoot 'iPhoto\gui\ui\qml')=iPhoto/gui/ui/qml",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\gl_image_viewer.frag')=iPhoto/gui/ui/widgets/gl_image_viewer.frag",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\gl_image_viewer.vert')=iPhoto/gui/ui/widgets/gl_image_viewer.vert",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_rhi.frag')=iPhoto/gui/ui/widgets/image_viewer_rhi.frag",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_rhi.frag.qsb')=iPhoto/gui/ui/widgets/image_viewer_rhi.frag.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_rhi.vert')=iPhoto/gui/ui/widgets/image_viewer_rhi.vert",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_rhi.vert.qsb')=iPhoto/gui/ui/widgets/image_viewer_rhi.vert.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_overlay.frag')=iPhoto/gui/ui/widgets/image_viewer_overlay.frag",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_overlay.frag.qsb')=iPhoto/gui/ui/widgets/image_viewer_overlay.frag.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_overlay.vert')=iPhoto/gui/ui/widgets/image_viewer_overlay.vert",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\image_viewer_overlay.vert.qsb')=iPhoto/gui/ui/widgets/image_viewer_overlay.vert.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\video_renderer.frag')=iPhoto/gui/ui/widgets/video_renderer.frag",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\video_renderer.frag.qsb')=iPhoto/gui/ui/widgets/video_renderer.frag.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\video_renderer.vert')=iPhoto/gui/ui/widgets/video_renderer.vert",
+            "--include-data-file=$(Join-Path $srcRoot 'iPhoto\gui\ui\widgets\video_renderer.vert.qsb')=iPhoto/gui/ui/widgets/video_renderer.vert.qsb",
+            "--include-data-file=$(Join-Path $srcRoot 'maps\style.json')=maps/style.json",
+            "--include-data-dir=$(Join-Path $srcRoot 'maps\map_widget\qml')=maps/map_widget/qml",
+            (Join-Path $srcRoot 'iPhoto\gui\main.py')
+          )
+
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Nuitka build failed with exit code $LASTEXITCODE" }
+
+      - name: Package ZIP
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $distDir = Get-ChildItem -Path dist -Directory -Filter "main.dist" | Select-Object -First 1
+          if (-not $distDir) { throw "Nuitka output directory not found" }
+          $zipName = "iPhotron-${env:VERSION}-windows-x86_64.zip"
+          Compress-Archive -Path "$($distDir.FullName)\*" -DestinationPath $zipName
+          Write-Host "Created $zipName"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: iPhotron-*-windows-x86_64.zip
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with all platform artifacts
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-assets/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            release-assets/*
