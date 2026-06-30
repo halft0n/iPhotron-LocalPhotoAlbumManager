@@ -833,6 +833,10 @@
             <source>Recently Deleted</source>
             <translation>最近删除</translation>
         </message>
+        <message>
+            <source>Cleanup</source>
+            <translation>整理</translation>
+        </message>
     </context>
     <context>
         <name>AlbumsDashboard</name>
@@ -1793,6 +1797,183 @@ Select a tile directory to switch back to the legacy backend.</source>
         <message>
             <source>Return to Map</source>
             <translation>返回地图</translation>
+        </message>
+    </context>
+    <context>
+        <name>CleanupDashboardWidget</name>
+        <message>
+            <source>Cleanup</source>
+            <translation>整理</translation>
+        </message>
+        <message>
+            <source>Exact Duplicates</source>
+            <translation>精确重复</translation>
+        </message>
+        <message>
+            <source>Similar Photos</source>
+            <translation>相似照片</translation>
+        </message>
+        <message>
+            <source>Screenshots</source>
+            <translation>截图</translation>
+        </message>
+        <message>
+            <source>{0} groups / {1} photos</source>
+            <translation>{0} 组 / {1} 张</translation>
+        </message>
+        <message>
+            <source>Free up {0}</source>
+            <translation>释放 {0}</translation>
+        </message>
+        <message>
+            <source>View details</source>
+            <translation>查看详情</translation>
+        </message>
+        <message>
+            <source>{0} photos</source>
+            <translation>{0} 张</translation>
+        </message>
+    </context>
+    <context>
+        <name>_BatchActionBar</name>
+        <message>
+            <source>Delete Marked Items</source>
+            <translation>删除已标记项</translation>
+        </message>
+        <message>
+            <source>Selected {0} items ({1})</source>
+            <translation>已选 {0} 项 ({1})</translation>
+        </message>
+        <message>
+            <source>Delete Marked Items ({0}, free {1})</source>
+            <translation>删除已标记项 ({0}，释放 {1})</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateGroupListWidget</name>
+        <message>
+            <source>No duplicate photos found.</source>
+            <translation>未发现重复照片。</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateGroupCard</name>
+        <message>
+            <source>Group ({0} photos, identical)</source>
+            <translation>组 ({0} 张照片，完全相同)</translation>
+        </message>
+        <message>
+            <source>Keep Recommended</source>
+            <translation>保留推荐项</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateAssetCard</name>
+        <message>
+            <source>Located in: {0}</source>
+            <translation>位于: {0}</translation>
+        </message>
+        <message>
+            <source>No camera info</source>
+            <translation>无相机信息</translation>
+        </message>
+        <message>
+            <source>Favorite</source>
+            <translation>已收藏</translation>
+        </message>
+        <message>
+            <source>Recommended</source>
+            <translation>推荐保留</translation>
+        </message>
+        <message>
+            <source>To delete</source>
+            <translation>标记删除</translation>
+        </message>
+        <message>
+            <source>Keep</source>
+            <translation>保留</translation>
+        </message>
+    </context>
+    <context>
+        <name>PhashProgressWidget</name>
+        <message>
+            <source>Computing perceptual hashes...</source>
+            <translation>正在计算感知哈希...</translation>
+        </message>
+        <message>
+            <source>Perceptual hash: {0} / {1}</source>
+            <translation>感知哈希: {0} / {1}</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarityThresholdWidget</name>
+        <message>
+            <source>Similarity threshold:</source>
+            <translation>相似度阈值:</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarGroupListWidget</name>
+        <message>
+            <source>No similar photos found.</source>
+            <translation>未发现相似照片。</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarGroupCard</name>
+        <message>
+            <source>Similar group ({0} photos)</source>
+            <translation>相似组 ({0} 张照片)</translation>
+        </message>
+    </context>
+    <context>
+        <name>ScreenshotFilterBar</name>
+        <message>
+            <source>All</source>
+            <translation>全部</translation>
+        </message>
+        <message>
+            <source>Today</source>
+            <translation>今天</translation>
+        </message>
+        <message>
+            <source>This Week</source>
+            <translation>本周</translation>
+        </message>
+        <message>
+            <source>This Month</source>
+            <translation>本月</translation>
+        </message>
+        <message>
+            <source>Sort:</source>
+            <translation>排序:</translation>
+        </message>
+        <message>
+            <source>By Date</source>
+            <translation>按日期</translation>
+        </message>
+        <message>
+            <source>By Size</source>
+            <translation>按大小</translation>
+        </message>
+    </context>
+    <context>
+        <name>ScreenshotGalleryWidget</name>
+        <message>
+            <source>Select All</source>
+            <translation>全选</translation>
+        </message>
+        <message>
+            <source>Invert</source>
+            <translation>反选</translation>
+        </message>
+        <message>
+            <source>{0} screenshots, {1}</source>
+            <translation>{0} 张截图，{1}</translation>
+        </message>
+        <message>
+            <source>Mark as Not Screenshot</source>
+            <translation>标记为非截图</translation>
         </message>
     </context>
 </TS>

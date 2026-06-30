@@ -201,6 +201,9 @@ class SchemaMigrator:
             "index_updated_at_ms": "ALTER TABLE assets ADD COLUMN index_updated_at_ms INTEGER DEFAULT 0",
             "location": "ALTER TABLE assets ADD COLUMN location TEXT",
             "face_status": "ALTER TABLE assets ADD COLUMN face_status TEXT",
+            "phash": "ALTER TABLE assets ADD COLUMN phash TEXT",
+            "phash_status": "ALTER TABLE assets ADD COLUMN phash_status TEXT DEFAULT 'pending'",
+            "is_screenshot": "ALTER TABLE assets ADD COLUMN is_screenshot INTEGER DEFAULT 0",
         }
 
         # Add missing columns
@@ -284,6 +287,23 @@ class SchemaMigrator:
             SET thumbnail_state = 'stale'
             WHERE thumbnail_state = 'ready'
                 AND TRIM(COALESCE(thumb_cache_key, '')) = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE assets
+            SET phash_status = 'skipped'
+            WHERE phash_status IS NULL OR TRIM(phash_status) = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE assets
+            SET phash_status = 'skipped'
+            WHERE (CAST(media_type AS TEXT) = '1'
+                OR (live_role IS NOT NULL AND CAST(live_role AS INTEGER) != 0)
+                OR mime LIKE 'video/%')
+              AND phash_status != 'skipped'
             """
         )
 
@@ -378,6 +398,14 @@ class SchemaMigrator:
             "CREATE INDEX IF NOT EXISTS idx_scan_events_job ON scan_events (job_id, event_id)",
             "CREATE INDEX IF NOT EXISTS idx_metadata_write_jobs_status ON metadata_write_jobs (status, updated_at)",
             "CREATE INDEX IF NOT EXISTS idx_metadata_write_jobs_asset ON metadata_write_jobs (asset_rel)",
+            ("CREATE INDEX IF NOT EXISTS idx_assets_phash "
+             "ON assets (phash) WHERE phash IS NOT NULL AND is_deleted = 0"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_content_id_dup "
+             "ON assets (id) WHERE is_deleted = 0"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_screenshot "
+             "ON assets (is_screenshot) WHERE is_screenshot = 1 AND is_deleted = 0"),
+            ("CREATE INDEX IF NOT EXISTS idx_assets_phash_status "
+             "ON assets (phash_status) WHERE phash_status != 'ready'"),
         ]
 
         for index_sql in indexes:

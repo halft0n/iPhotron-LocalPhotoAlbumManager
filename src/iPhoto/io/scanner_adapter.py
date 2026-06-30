@@ -23,6 +23,7 @@ from ..infrastructure.services.thumbnail_cache_keys import (
     thumbnail_cache_key,
 )
 from ..infrastructure.services.thumbnail_generator import PillowThumbnailGenerator
+from ..domain.services.screenshot_classifier import ScreenshotClassifier
 from ..people import initial_face_status
 from ..utils.hashutils import compute_file_id
 from ..utils.media_access import media_access
@@ -272,6 +273,14 @@ def _fallback_row_for_path(root: Path, path: Path) -> Dict[str, Any]:
         "month": dt_obj.month,
     }
     row["face_status"] = initial_face_status(row)
+    row["is_screenshot"] = int(ScreenshotClassifier.classify(
+        str(row.get("rel", "")),
+        int(row.get("w") or 0),
+        int(row.get("h") or 0),
+        row.get("make"),
+        row.get("model"),
+        row.get("mime"),
+    ))
     return row
 
 def process_media_paths(
@@ -348,6 +357,14 @@ def process_media_paths(
             if thumbnail.thumb_error:
                 row["thumb_error"] = thumbnail.thumb_error
 
+            row["is_screenshot"] = int(ScreenshotClassifier.classify(
+                str(row.get("rel", "")),
+                int(row.get("w") or 0),
+                int(row.get("h") or 0),
+                row.get("make"),
+                row.get("model"),
+                row.get("mime"),
+            ))
             yield row
 
 def scan_album(

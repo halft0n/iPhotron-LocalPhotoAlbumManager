@@ -77,6 +77,8 @@ class MainCoordinator(QObject):
         self._facade = context.facade
         self._logger = logging.getLogger(__name__)
         self._media_failure_cleanup_paths: set[str] = set()
+        self._cleanup_coordinator = None
+        self._cleanup_vm = None
         self._map_extension_download = MapExtensionDownloadController(
             window,
             context,
@@ -460,6 +462,10 @@ class MainCoordinator(QObject):
         if self._edit:
             self._edit.shutdown()
 
+        cleanup_coordinator = getattr(self, "_cleanup_coordinator", None)
+        if cleanup_coordinator is not None:
+            cleanup_coordinator.shutdown()
+
         if hasattr(self._window.ui, "preview_window"):
             try:
                 self._window.ui.preview_window.close_preview(False)
@@ -652,6 +658,29 @@ class MainCoordinator(QObject):
             dashboard.set_pinned_service(self._pinned_items_service)
             dashboard.albumSelected.connect(self.open_album_from_path)
             self._facade.albumCoverUpdated.connect(dashboard.update_album_cover)
+            return
+
+        if feature == "cleanup":
+            from iPhoto.gui.coordinators.cleanup_coordinator import CleanupCoordinator
+            from iPhoto.gui.viewmodels.cleanup_viewmodel import CleanupViewModel
+
+            dashboard = getattr(ui, "cleanup_page", widget)
+            if self._cleanup_coordinator is not None:
+                return
+            vm = CleanupViewModel(parent=self)
+            cleanup_service = self._cleanup_service()
+            if cleanup_service is not None:
+                vm.bind_cleanup_service(cleanup_service)
+            self._cleanup_vm = vm
+            self._cleanup_coordinator = CleanupCoordinator(
+                dashboard=dashboard,
+                cleanup_vm=vm,
+                deletion_service=self._facade._deletion_service,
+                library_root_getter=self._library_root,
+                parent=self,
+            )
+            self._cleanup_coordinator.start()
+            return
 
     def _on_library_tree_updated(self) -> None:
         root = self._library_root()
@@ -688,6 +717,15 @@ class MainCoordinator(QObject):
             ui.map_view.set_map_interaction_service(map_interaction_service)
         if ui is not None and hasattr(ui, "info_panel"):
             ui.info_panel.set_map_runtime(map_runtime)
+        cleanup_vm = getattr(self, "_cleanup_vm", None)
+        if cleanup_vm is not None:
+            cleanup_coordinator = getattr(self, "_cleanup_coordinator", None)
+            if cleanup_coordinator is not None:
+                cleanup_coordinator.shutdown()
+            bound_cleanup_service = self._cleanup_service(library_root=root)
+            if bound_cleanup_service is not None:
+                cleanup_vm.bind_cleanup_service(bound_cleanup_service)
+            cleanup_vm.load_summary()
         playback = getattr(self, "_playback", None)
         if playback is not None:
             playback.set_map_runtime(map_runtime)
@@ -729,6 +767,18 @@ class MainCoordinator(QObject):
         if session is not None and (library_root is None or session_root == library_root):
             return getattr(session, "people", None)
         return resolve_people_service(
+            self._context.library,
+            library_root=library_root,
+        )
+
+    def _cleanup_service(self, library_root: Path | None = None):
+        session = self._active_session()
+        session_root = getattr(session, "library_root", None) if session is not None else None
+        if session is not None and (library_root is None or session_root == library_root):
+            return getattr(session, "cleanup", None)
+        from iPhoto.gui.services.session_service_resolver import bound_cleanup_service
+
+        return bound_cleanup_service(
             self._context.library,
             library_root=library_root,
         )

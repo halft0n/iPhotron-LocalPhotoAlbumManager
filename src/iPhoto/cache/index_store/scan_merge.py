@@ -21,6 +21,9 @@ _PRESERVED_SCAN_STATE_FIELDS = (
     "live_role",
     "live_partner_rel",
     "is_deleted",
+    "phash",
+    "phash_status",
+    "is_screenshot",
 )
 
 

@@ -21,6 +21,7 @@ from ..infrastructure.repositories.library_state_repository import (
 from ..infrastructure.services.library_asset_runtime import LibraryAssetRuntime
 from ..infrastructure.services.map_runtime_service import SessionMapRuntimeService
 from ..people.service import PeopleService
+from .library_cleanup_service import LibraryCleanupService
 from .library_asset_state_service import LibraryAssetStateService
 from .library_album_metadata_service import LibraryAlbumMetadataService
 from .library_asset_lifecycle_service import LibraryAssetLifecycleService
@@ -50,6 +51,7 @@ class LibrarySession:
     map_interactions: MapInteractionServicePort | None = None
     edit: EditServicePort | None = None
     locations: LocationAssetServicePort | None = None
+    cleanup: LibraryCleanupService | None = None
     bind_asset_runtime: bool = True
 
     def __post_init__(self) -> None:
@@ -99,6 +101,13 @@ class LibrarySession:
                 self.library_root,
                 query_service=self.asset_queries,
             )
+        if self.cleanup is None:
+            repo = getattr(self.asset_runtime, "assets", None)
+            if repo is not None:
+                self.cleanup = LibraryCleanupService(
+                    self.library_root,
+                    repository=repo,
+                )
         bind_edit_service = getattr(self.asset_runtime, "bind_edit_service", None)
         if callable(bind_edit_service):
             bind_edit_service(self.edit)

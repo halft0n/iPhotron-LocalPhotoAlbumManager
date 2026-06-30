@@ -49,6 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ..bootstrap.library_asset_lifecycle_service import LibraryAssetLifecycleService
     from ..bootstrap.library_asset_operation_service import LibraryAssetOperationService
     from ..bootstrap.library_asset_query_service import LibraryAssetQueryService
+    from ..bootstrap.library_cleanup_service import LibraryCleanupService
     from ..bootstrap.library_session import LibrarySession
     from ..bootstrap.library_scan_service import LibraryScanService
     from ..application.ports import LibraryStateRepositoryPort
@@ -126,6 +127,7 @@ class LibraryRuntimeController(
         self._map_interaction_service: "MapInteractionServicePort | None" = None
         self._edit_service: "EditServicePort | None" = None
         self._location_service: "LocationAssetServicePort | None" = None
+        self._cleanup_service: "LibraryCleanupService | None" = None
 
     # ------------------------------------------------------------------
     # Basic properties
@@ -290,6 +292,7 @@ class LibraryRuntimeController(
             self.bind_state_repository(None)
             self.bind_asset_query_service(None)
             self.bind_scan_service(None)
+            self.bind_cleanup_service(None)
         else:
             self.bind_asset_query_service(library_session.asset_queries)
             self.bind_state_repository(library_session.state)
@@ -303,6 +306,7 @@ class LibraryRuntimeController(
             self.bind_people_service(library_session.people)
             self.bind_map_runtime(library_session.maps)
             self.bind_map_interaction_service(library_session.map_interactions)
+            self.bind_cleanup_service(library_session.cleanup)
 
         if previous is not None and previous is not library_session and previous_owned:
             previous.shutdown()
@@ -472,6 +476,18 @@ class LibraryRuntimeController(
     @property
     def location_service(self) -> "LocationAssetServicePort | None":
         return self._location_service
+
+    def bind_cleanup_service(
+        self,
+        cleanup_service: "LibraryCleanupService | None",
+    ) -> None:
+        """Bind the current library session cleanup command surface."""
+
+        self._cleanup_service = cleanup_service
+
+    @property
+    def cleanup_service(self) -> "LibraryCleanupService | None":
+        return self._cleanup_service
 
     def _bind_people_index_coordinator(self, root: Path) -> None:
         from ..people.index_coordinator import get_people_index_coordinator

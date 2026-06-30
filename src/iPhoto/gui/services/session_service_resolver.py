@@ -10,6 +10,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...bootstrap.library_asset_lifecycle_service import LibraryAssetLifecycleService
     from ...bootstrap.library_asset_operation_service import LibraryAssetOperationService
     from ...bootstrap.library_asset_query_service import LibraryAssetQueryService
+    from ...bootstrap.library_cleanup_service import LibraryCleanupService
     from ...bootstrap.library_scan_service import LibraryScanService
     from ...library.runtime_controller import LibraryRuntimeController
 
@@ -71,6 +72,25 @@ def bound_asset_query_service(
         attr="asset_query_service",
         library_root=library_root,
         required_methods=("count_assets", "read_asset_rows", "read_geometry_rows"),
+    )
+
+
+def bound_cleanup_service(
+    library_manager: "LibraryRuntimeController | None",
+    *,
+    library_root: Path | None = None,
+) -> "LibraryCleanupService | None":
+    """Return the currently bound cleanup service when available."""
+
+    return _bound_service(
+        library_manager,
+        attr="cleanup_service",
+        library_root=library_root,
+        required_methods=(
+            "get_cleanup_summary",
+            "find_exact_duplicates",
+            "find_screenshots",
+        ),
     )
 
 
@@ -150,5 +170,6 @@ __all__ = [
     "bound_asset_lifecycle_service",
     "bound_asset_operation_service",
     "bound_asset_query_service",
+    "bound_cleanup_service",
     "bound_scan_service",
 ]

@@ -237,6 +237,9 @@ class NavigationCoordinator(QObject):
             self.open_people_view()
         elif normalized == "location":
             self.open_location_view()
+        elif normalized == "cleanup":
+            self._reset_playback()
+            self._gallery_vm.route_requested.emit("cleanup")
 
     def _handle_route_requested(self, view: str) -> None:
         if view == "gallery":
@@ -249,6 +252,8 @@ class NavigationCoordinator(QObject):
             self._router.show_albums_dashboard()
         elif view == "detail":
             self._router.show_detail()
+        elif view == "cleanup":
+            self._router.show_cleanup()
 
     def _handle_detail_requested(self, row: int) -> None:
         if self._playback_coordinator is not None:

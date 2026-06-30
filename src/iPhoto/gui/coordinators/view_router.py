@@ -26,6 +26,7 @@ class ViewRouter(QObject):
     mapViewShown = Signal()
     peopleViewShown = Signal()
     dashboardViewShown = Signal()  # Added signal for dashboard
+    cleanupViewShown = Signal()
 
     def __init__(self, ui: Ui_MainWindow):
         super().__init__()
@@ -55,6 +56,10 @@ class ViewRouter(QObject):
         self._edit_idx = -1
         if hasattr(ui, "edit_page"):
             self._edit_idx = self._stack.indexOf(ui.edit_page)
+
+        self._cleanup_idx = -1
+        if hasattr(ui, "cleanup_page"):
+            self._cleanup_idx = self._stack.indexOf(ui.cleanup_page)
 
     def show_gallery(self):
         """Switch to the Gallery (Grid) view."""
@@ -131,6 +136,15 @@ class ViewRouter(QObject):
             self._stack.setCurrentIndex(self._dashboard_idx)
             self.dashboardViewShown.emit()
 
+    def show_cleanup(self):
+        """Switch to the Cleanup dashboard."""
+        if self._cleanup_idx == -1:
+            cleanup = self._ui.ensure_feature("cleanup")
+            self._cleanup_idx = self._stack.indexOf(cleanup)
+        if self._cleanup_idx != -1 and self._stack.currentIndex() != self._cleanup_idx:
+            self._stack.setCurrentIndex(self._cleanup_idx)
+            self.cleanupViewShown.emit()
+
     def is_detail_view_active(self) -> bool:
         return self._stack.currentIndex() == self._detail_idx
 
@@ -139,6 +153,9 @@ class ViewRouter(QObject):
 
     def is_dashboard_view_active(self) -> bool:
         return self._dashboard_idx != -1 and self._stack.currentIndex() == self._dashboard_idx
+
+    def is_cleanup_view_active(self) -> bool:
+        return self._cleanup_idx != -1 and self._stack.currentIndex() == self._cleanup_idx
 
     def is_edit_view_active(self) -> bool:
         if self._edit_idx != -1:

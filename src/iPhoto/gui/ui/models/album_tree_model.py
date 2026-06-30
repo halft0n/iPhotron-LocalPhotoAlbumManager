@@ -91,6 +91,7 @@ class AlbumTreeModel(QAbstractItemModel):
         "Favorites",
         "People",
         "Location",
+        "Cleanup",
     )
 
     TRAILING_STATIC_NODES: tuple[str, ...] = ("Recently Deleted",)
@@ -105,6 +106,7 @@ class AlbumTreeModel(QAbstractItemModel):
         "favorites": "suit.heart",
         "people": "person.crop.square",
         "location": "mappin.and.ellipse",
+        "cleanup": "sparkles",
         "recently deleted": "trash",
     }
 
@@ -337,6 +339,7 @@ class AlbumTreeModel(QAbstractItemModel):
             "Pinned": tr("AlbumSidebar", "Pinned"),
             "Albums": tr("AlbumSidebar", "Albums"),
             "Recently Deleted": tr("AlbumSidebar", "Recently Deleted"),
+            "Cleanup": tr("AlbumSidebar", "Cleanup"),
         }
         return translations.get(title, title)
 

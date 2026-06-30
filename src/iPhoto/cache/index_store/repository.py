@@ -1809,6 +1809,228 @@ class AssetRepository:
             asset_rel=str(asset_rel),
         )
 
+    def find_exact_duplicate_groups(self) -> List[Dict[str, Any]]:
+        """Return groups of assets sharing the same content hash."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            cursor = conn.execute(
+                """
+                SELECT id, GROUP_CONCAT(rel) AS rels,
+                       COUNT(*) AS count, SUM(bytes) AS total_bytes
+                FROM assets
+                WHERE is_deleted = 0 AND live_role = 0
+                  AND id IS NOT NULL AND TRIM(id) != ''
+                GROUP BY id
+                HAVING count >= 2
+                ORDER BY total_bytes DESC
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            if should_close:
+                conn.close()
+
+    def find_duplicate_group_details(self, content_id: str) -> List[Dict[str, Any]]:
+        """Return full asset rows for a single duplicate group."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM assets
+                WHERE id = ? AND is_deleted = 0 AND live_role = 0
+                ORDER BY is_favorite DESC, has_gps DESC, bytes DESC, dt ASC
+                """,
+                (content_id,),
+            )
+            return [self._db_row_to_dict(row) for row in cursor]
+        finally:
+            if should_close:
+                conn.close()
+
+    def count_exact_duplicate_groups(self) -> Tuple[int, int, int]:
+        """Return (group_count, total_duplicate_assets, wasted_bytes)."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*) AS group_count,
+                       SUM(cnt) AS asset_count,
+                       SUM(total_bytes - max_bytes) AS wasted_bytes
+                FROM (
+                    SELECT id, COUNT(*) AS cnt,
+                           SUM(bytes) AS total_bytes,
+                           MAX(bytes) AS max_bytes
+                    FROM assets
+                    WHERE is_deleted = 0 AND live_role = 0
+                      AND id IS NOT NULL AND TRIM(id) != ''
+                    GROUP BY id
+                    HAVING cnt >= 2
+                )
+                """
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return (0, 0, 0)
+            return (
+                int(row[0] or 0),
+                int(row[1] or 0),
+                int(row[2] or 0),
+            )
+        finally:
+            if should_close:
+                conn.close()
+
+    def read_all_visible(self) -> List[Dict[str, Any]]:
+        """Return all non-deleted visible assets for reclassification."""
+        return [
+            row for row in self.read_all(filter_hidden=True)
+            if not row.get("is_deleted")
+        ]
+
+    def find_screenshots(self) -> List[Dict[str, Any]]:
+        """Return all asset rows flagged as screenshots."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM assets
+                WHERE is_screenshot = 1 AND is_deleted = 0
+                ORDER BY sort_ts DESC, id DESC
+                """
+            )
+            return [self._db_row_to_dict(row) for row in cursor]
+        finally:
+            if should_close:
+                conn.close()
+
+    def count_screenshots(self) -> Tuple[int, int]:
+        """Return (count, total_bytes) for screenshots."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+                FROM assets
+                WHERE is_screenshot = 1 AND is_deleted = 0
+                """
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return (0, 0)
+            return (int(row[0] or 0), int(row[1] or 0))
+        finally:
+            if should_close:
+                conn.close()
+
+    def update_screenshot_flag(self, rel: str, is_screenshot: bool) -> None:
+        """Set the screenshot flag for a single asset."""
+        val = 1 if is_screenshot else 0
+        self._db_manager.execute_in_transaction(
+            "UPDATE assets SET is_screenshot = ? WHERE rel = ?",
+            (val, rel),
+        )
+
+    def batch_update_screenshot_flags(
+        self, updates: List[Tuple[str, bool]]
+    ) -> None:
+        """Batch-set screenshot flags."""
+        if not updates:
+            return
+        with self.transaction() as conn:
+            conn.executemany(
+                "UPDATE assets SET is_screenshot = ? WHERE rel = ?",
+                [(1 if flag else 0, rel) for rel, flag in updates],
+            )
+
+    def get_phash_progress(self) -> Tuple[int, int]:
+        """Return (ready_count, total_eligible_count)."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            cursor = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN phash_status = 'ready' THEN 1 ELSE 0 END),
+                    COUNT(*)
+                FROM assets
+                WHERE is_deleted = 0 AND phash_status != 'skipped'
+                """
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return (0, 0)
+            return (int(row[0] or 0), int(row[1] or 0))
+        finally:
+            if should_close:
+                conn.close()
+
+    def get_pending_phash_batch(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """Return up to *limit* rows whose phash has not been computed."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT rel, id, mime, w, h, thumb_cache_key
+                FROM assets
+                WHERE is_deleted = 0
+                  AND phash_status IN ('pending', '')
+                  AND live_role = 0
+                ORDER BY sort_ts DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            return [dict(row) for row in cursor]
+        finally:
+            if should_close:
+                conn.close()
+
+    def update_phash(self, rel: str, phash: str, status: str = "ready") -> None:
+        """Write the computed perceptual hash for a single asset."""
+        self._db_manager.execute_in_transaction(
+            "UPDATE assets SET phash = ?, phash_status = ? WHERE rel = ?",
+            (phash, status, rel),
+        )
+
+    def batch_update_phash(
+        self, updates: List[Tuple[str, str, str]]
+    ) -> None:
+        """Batch-write phash results [(rel, phash, status), ...]."""
+        if not updates:
+            return
+        with self.transaction() as conn:
+            conn.executemany(
+                "UPDATE assets SET phash = ?, phash_status = ? WHERE rel = ?",
+                [(phash, status, rel) for rel, phash, status in updates],
+            )
+
+    def find_assets_with_phash(self) -> List[Tuple[str, str]]:
+        """Return [(rel, phash), ...] for all assets with a computed phash."""
+        conn = self._db_manager.get_connection()
+        should_close = conn != self._db_manager._conn
+        try:
+            cursor = conn.execute(
+                """
+                SELECT rel, phash FROM assets
+                WHERE phash IS NOT NULL AND TRIM(phash) != ''
+                  AND is_deleted = 0
+                ORDER BY sort_ts DESC
+                """
+            )
+            return [(row[0], row[1]) for row in cursor]
+        finally:
+            if should_close:
+                conn.close()
+
     def _library_relative_path(self, path: Path) -> str:
         candidate = Path(path)
         if not candidate.is_absolute():

@@ -40,6 +40,7 @@ class FeatureKind(StrEnum):
     MAP = "map"
     PEOPLE = "people"
     ALBUMS = "albums"
+    CLEANUP = "cleanup"
 
 
 def _configure_opaque_widget_background(widget: QWidget, background: str | None = None) -> None:
@@ -241,6 +242,7 @@ class Ui_MainWindow(QObject):
             FeatureKind.MAP: self._create_map_feature,
             FeatureKind.PEOPLE: self._create_people_feature,
             FeatureKind.ALBUMS: self._create_albums_feature,
+            FeatureKind.CLEANUP: self._create_cleanup_feature,
         }[kind]
         created = factory()
         self._features[kind] = created
@@ -326,6 +328,13 @@ class Ui_MainWindow(QObject):
         self.albums_dashboard_page = AlbumsDashboard(self._library, self._main_window)
         self.view_stack.addWidget(self.albums_dashboard_page)
         return self.albums_dashboard_page
+
+    def _create_cleanup_feature(self) -> object:
+        from .widgets.cleanup_dashboard import CleanupDashboardWidget
+
+        self.cleanup_page = CleanupDashboardWidget()
+        self.view_stack.addWidget(self.cleanup_page)
+        return self.cleanup_page
 
     def retranslateUi(self, MainWindow: QMainWindow) -> None:  # noqa: N802 - Qt style
         """Apply translatable strings to the window."""

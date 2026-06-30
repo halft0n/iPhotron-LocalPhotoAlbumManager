@@ -833,6 +833,10 @@
             <source>Recently Deleted</source>
             <translation>Zuletzt gelöscht</translation>
         </message>
+        <message>
+            <source>Cleanup</source>
+            <translation>Aufräumen</translation>
+        </message>
     </context>
     <context>
         <name>AlbumsDashboard</name>
@@ -1793,6 +1797,183 @@ Wählen Sie ein Kachelverzeichnis aus, um zurück zum alten Backend zu wechseln.
         <message>
             <source>Return to Map</source>
             <translation>Zurück zur Karte</translation>
+        </message>
+    </context>
+    <context>
+        <name>CleanupDashboardWidget</name>
+        <message>
+            <source>Cleanup</source>
+            <translation>Aufräumen</translation>
+        </message>
+        <message>
+            <source>Exact Duplicates</source>
+            <translation>Exakte Duplikate</translation>
+        </message>
+        <message>
+            <source>Similar Photos</source>
+            <translation>Ähnliche Fotos</translation>
+        </message>
+        <message>
+            <source>Screenshots</source>
+            <translation>Bildschirmfotos</translation>
+        </message>
+        <message>
+            <source>{0} groups / {1} photos</source>
+            <translation>{0} Gruppen / {1} Fotos</translation>
+        </message>
+        <message>
+            <source>Free up {0}</source>
+            <translation>{0} Speicher freigeben</translation>
+        </message>
+        <message>
+            <source>View details</source>
+            <translation>Details anzeigen</translation>
+        </message>
+        <message>
+            <source>{0} photos</source>
+            <translation>{0} Fotos</translation>
+        </message>
+    </context>
+    <context>
+        <name>_BatchActionBar</name>
+        <message>
+            <source>Delete Marked Items</source>
+            <translation>Markierte löschen</translation>
+        </message>
+        <message>
+            <source>Selected {0} items ({1})</source>
+            <translation>{0} Elemente ausgewählt ({1})</translation>
+        </message>
+        <message>
+            <source>Delete Marked Items ({0}, free {1})</source>
+            <translation>Markierte löschen ({0}, {1} freigeben)</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateGroupListWidget</name>
+        <message>
+            <source>No duplicate photos found.</source>
+            <translation>Keine doppelten Fotos gefunden.</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateGroupCard</name>
+        <message>
+            <source>Group ({0} photos, identical)</source>
+            <translation>Gruppe ({0} Fotos, identisch)</translation>
+        </message>
+        <message>
+            <source>Keep Recommended</source>
+            <translation>Empfohlene behalten</translation>
+        </message>
+    </context>
+    <context>
+        <name>DuplicateAssetCard</name>
+        <message>
+            <source>Located in: {0}</source>
+            <translation>Befindet sich in: {0}</translation>
+        </message>
+        <message>
+            <source>No camera info</source>
+            <translation>Keine Kamerainformationen</translation>
+        </message>
+        <message>
+            <source>Favorite</source>
+            <translation>Favorit</translation>
+        </message>
+        <message>
+            <source>Recommended</source>
+            <translation>Empfohlen</translation>
+        </message>
+        <message>
+            <source>To delete</source>
+            <translation>Zum Löschen</translation>
+        </message>
+        <message>
+            <source>Keep</source>
+            <translation>Behalten</translation>
+        </message>
+    </context>
+    <context>
+        <name>PhashProgressWidget</name>
+        <message>
+            <source>Computing perceptual hashes...</source>
+            <translation>Berechne Wahrnehmungs-Hashes...</translation>
+        </message>
+        <message>
+            <source>Perceptual hash: {0} / {1}</source>
+            <translation>Wahrnehmungs-Hash: {0} / {1}</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarityThresholdWidget</name>
+        <message>
+            <source>Similarity threshold:</source>
+            <translation>Ähnlichkeitsschwelle:</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarGroupListWidget</name>
+        <message>
+            <source>No similar photos found.</source>
+            <translation>Keine ähnlichen Fotos gefunden.</translation>
+        </message>
+    </context>
+    <context>
+        <name>SimilarGroupCard</name>
+        <message>
+            <source>Similar group ({0} photos)</source>
+            <translation>Ähnliche Gruppe ({0} Fotos)</translation>
+        </message>
+    </context>
+    <context>
+        <name>ScreenshotFilterBar</name>
+        <message>
+            <source>All</source>
+            <translation>Alle</translation>
+        </message>
+        <message>
+            <source>Today</source>
+            <translation>Heute</translation>
+        </message>
+        <message>
+            <source>This Week</source>
+            <translation>Diese Woche</translation>
+        </message>
+        <message>
+            <source>This Month</source>
+            <translation>Dieser Monat</translation>
+        </message>
+        <message>
+            <source>Sort:</source>
+            <translation>Sortieren:</translation>
+        </message>
+        <message>
+            <source>By Date</source>
+            <translation>Nach Datum</translation>
+        </message>
+        <message>
+            <source>By Size</source>
+            <translation>Nach Größe</translation>
+        </message>
+    </context>
+    <context>
+        <name>ScreenshotGalleryWidget</name>
+        <message>
+            <source>Select All</source>
+            <translation>Alle auswählen</translation>
+        </message>
+        <message>
+            <source>Invert</source>
+            <translation>Auswahl umkehren</translation>
+        </message>
+        <message>
+            <source>{0} screenshots, {1}</source>
+            <translation>{0} Bildschirmfotos, {1}</translation>
+        </message>
+        <message>
+            <source>Mark as Not Screenshot</source>
+            <translation>Kein Bildschirmfoto</translation>
         </message>
     </context>
 </TS>

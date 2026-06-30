@@ -10,6 +10,7 @@ from .media import (
     MetadataWriterPort,
     ThumbnailRendererPort,
 )
+from .cleanup import CleanupRepositoryPort
 from .people import PeopleAssetRepositoryPort, PeopleIndexPort
 from .repositories import (
     AlbumRepositoryPort,
@@ -35,6 +36,7 @@ __all__ = [
     "AssetRepositoryPort",
     "AssetFavoriteQueryPort",
     "AssetStateServicePort",
+    "CleanupRepositoryPort",
     "EditRenderingState",
     "EditServicePort",
     "EditSidecarPort",
